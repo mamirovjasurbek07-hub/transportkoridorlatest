@@ -1,0 +1,17 @@
+.env
+*.py[cod]
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+node_modules/
+dist/
+*.tsbuildinfo
+coverage/
+playwright-report/
+test-results/
+.DS_Store
+*.log
+.tools/
+.node-portable.zip
