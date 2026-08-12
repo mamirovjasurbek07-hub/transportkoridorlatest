@@ -1,5 +1,6 @@
-import { CalendarDays, Filter, RotateCcw, Search } from 'lucide-react'
+import { CalendarDays, Filter, RotateCcw } from 'lucide-react'
 import type { Corridor, Country, CustomsPost, Filters } from '../../types'
+import CountryCombobox from '../../CountryCombobox'
 
 interface Props {
   value: Filters
@@ -26,8 +27,8 @@ export default function FilterPanel({ value, draft, setDraft, apply, clear, coun
     <section className="filter-panel panel" aria-label="Tranzit ma'lumotlarini filtrlash">
       <div className="panel-heading"><div><span className="icon-box"><Filter size={18} /></span><div><h2>Ma'lumotlarni filtrlash</h2><p>Yo'nalish va davrni tanlang</p></div></div><span className="filter-status">{JSON.stringify(value) === JSON.stringify(draft) ? 'Faol' : 'O‘zgartirilgan'}</span></div>
       <div className="filter-grid">
-        <label><span>Tashuv boshlangan davlat</span><div className="input-wrap"><Search size={16} /><select value={draft.origin} onChange={(e) => changeOrigin(e.target.value)}><option value="">Barcha yo'nalishlar</option>{countries.map((c) => <option key={`${c.numeric}-${c.alpha2}`} value={c.alpha2} disabled={!originCodes.has(c.alpha2)}>{c.flag} {c.name} · {c.alpha3}{!originCodes.has(c.alpha2) ? " · yo'lak sozlanmagan" : ''}</option>)}</select></div></label>
-        <label><span>Tashuv tugallangan davlat</span><div className="input-wrap"><Search size={16} /><select value={draft.destination} onChange={(e) => changeDestination(e.target.value)}><option value="">Barcha mos davlatlar</option>{countries.map((c) => <option key={`${c.numeric}-${c.alpha2}`} value={c.alpha2} disabled={!destinationCodes.has(c.alpha2)}>{c.flag} {c.name} · {c.alpha3}{!destinationCodes.has(c.alpha2) ? " · bu yo'nalishda yo'lak yo'q" : ''}</option>)}</select></div></label>
+        <label><span>Tashuv boshlangan davlat</span><CountryCombobox value={draft.origin} onChange={changeOrigin} countries={countries.filter((country) => originCodes.has(country.alpha2))} emptyLabel="Barcha yo'nalishlar"/></label>
+        <label><span>Tashuv tugallangan davlat</span><CountryCombobox value={draft.destination} onChange={changeDestination} countries={countries.filter((country) => destinationCodes.has(country.alpha2))} emptyLabel="Barcha mos davlatlar"/></label>
         <label><span>Boshlanish sanasi</span><div className="input-wrap"><CalendarDays size={16} /><input type="date" value={draft.date_from} max={draft.date_to} onChange={(e) => update('date_from', e.target.value)} /></div></label>
         <label><span>Tugash sanasi</span><div className="input-wrap"><CalendarDays size={16} /><input type="date" value={draft.date_to} min={draft.date_from} max={new Date().toISOString().slice(0, 10)} onChange={(e) => update('date_to', e.target.value)} /></div></label>
         <details className="advanced-filters"><summary>Qo'shimcha filtrlar</summary><div className="advanced-grid">
