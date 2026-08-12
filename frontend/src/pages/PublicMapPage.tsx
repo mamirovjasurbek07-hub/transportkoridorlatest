@@ -25,7 +25,7 @@ export default function PublicMapPage() {
   const countries = useQuery({ queryKey: ['countries'], queryFn: () => api<Country[]>('/countries') })
   const posts = useQuery({ queryKey: ['posts-public'], queryFn: () => api<{ items: CustomsPost[] }>('/posts?page_size=500') })
   const corridors = useQuery({ queryKey: ['corridors-public'], queryFn: () => api<{ items: Corridor[] }>('/corridors') })
-  const query = useQuery({ queryKey: ['analytics', filters], queryFn: ({ signal }) => { const search = new URLSearchParams(Object.entries(filters).filter(([, v]) => v)); return api<AnalyticsData>(`/analytics?${search}`, {}, signal) } })
+  const query = useQuery({ queryKey: ['analytics', filters], queryFn: ({ signal }) => { const search = new URLSearchParams(Object.entries(filters).filter(([, v]) => v)); return api<AnalyticsData>(`/analytics?${search}`, {}, signal) }, refetchInterval: (current) => Number(current.state.data?.meta.unavailable_count || 0) > 0 ? 15_000 : false })
   const selectCorridor = useCallback((value: Record<string, unknown> | null) => setSelected(value), [])
   const apply = () => { setSelected(null); setFilters(draft); setParams(Object.fromEntries(Object.entries(draft).filter(([, v]) => v))) }
   const clear = () => { const next = defaultFilters(new URLSearchParams()); setSelected(null); setDraft(next); setFilters(next); setParams({}) }
