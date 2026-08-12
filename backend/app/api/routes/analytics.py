@@ -85,7 +85,8 @@ async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, or
             (c.origin_country_code, c.destination_country_code, c.entry_post_code, c.exit_post_code), c
         )
     post_rows = (await db.scalars(select(CustomsPost).where(CustomsPost.is_active.is_(True), CustomsPost.latitude.is_not(None)))).all()
-    post_names = {post.post_code: post.post_name for post in post_rows}
+    posts_by_code = {post.post_code: post for post in post_rows}
+    post_names = {code: post.post_name for code, post in posts_by_code.items()}
     features = []
     unavailable = []
     for row in grouped:
@@ -109,6 +110,10 @@ async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, or
             "exit_post_code": row.exit_post_code,
             "entry_post_name": post_names.get(row.entry_post_code, row.entry_post_code),
             "exit_post_name": post_names.get(row.exit_post_code, row.exit_post_code),
+            "entry_allow_passenger": posts_by_code.get(row.entry_post_code).allow_passenger_vehicles if row.entry_post_code in posts_by_code else None,
+            "entry_allow_cargo": posts_by_code.get(row.entry_post_code).allow_cargo_vehicles if row.entry_post_code in posts_by_code else None,
+            "exit_allow_passenger": posts_by_code.get(row.exit_post_code).allow_passenger_vehicles if row.exit_post_code in posts_by_code else None,
+            "exit_allow_cargo": posts_by_code.get(row.exit_post_code).allow_cargo_vehicles if row.exit_post_code in posts_by_code else None,
             "declaration_count": row.count,
             "percentage_share": round(row.count * 100 / total, 2) if total else 0,
             "avg_transit_minutes": round((row.avg_seconds or 0) / 60),
@@ -140,7 +145,8 @@ async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, or
         "type": "Feature", "geometry": {"type": "Point", "coordinates": [p.longitude, p.latitude]},
         "properties": {"id": str(p.id), "post_code": p.post_code, "post_name": p.post_name, "post_type": p.post_type,
             "neighbor_country_code": p.neighbor_country_code, "entry_count": entry_counts.get(p.post_code, 0),
-            "exit_count": exit_counts.get(p.post_code, 0), "total_flow": entry_counts.get(p.post_code, 0) + exit_counts.get(p.post_code, 0)},
+            "exit_count": exit_counts.get(p.post_code, 0), "total_flow": entry_counts.get(p.post_code, 0) + exit_counts.get(p.post_code, 0),
+            "allow_passenger_vehicles": p.allow_passenger_vehicles, "allow_cargo_vehicles": p.allow_cargo_vehicles},
     } for p in post_rows]}
     by_origin = (await db.execute(select(TransitDeclaration.origin_country_code, func.count().label("count")).where(*filters).group_by(TransitDeclaration.origin_country_code).order_by(func.count().desc()).limit(8))).all()
     trend = (await db.execute(select(TransitDeclaration.declaration_date, func.count().label("count")).where(*filters).group_by(TransitDeclaration.declaration_date).order_by(TransitDeclaration.declaration_date))).all()
