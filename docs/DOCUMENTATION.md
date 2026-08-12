@@ -103,10 +103,11 @@ Blueprint so‘ragan qiymatlar:
 - `DATABASE_URL` — Supabase Session pooler URI;
 - `ADMIN_INITIAL_EMAIL` — Render'dagi amaldagi admin emaili;
 - `ADMIN_INITIAL_PASSWORD` — Render'dagi amaldagi, kuchli va noyob admin paroli.
-- `YANDEX_MAPS_API_KEY` — Yandex JavaScript API kaliti (public xarita uchun);
-- `YANDEX_ROUTER_API_KEY` — Yandex Router API kaliti (backendda yo‘l geometriyasini olish uchun).
+- `YANDEX_MAPS_API_KEY` — Yandex JavaScript API kaliti (public xarita uchun).
 
-Yandex uchun `MAP_PROVIDER=yandex`, `ROUTING_PROVIDER=yandex` va odatiy avtomobil yo‘li uchun `ROUTING_PROFILE=driving` bo‘lishi kerak. JavaScript API kalitini Yandex kabinetida Render domeniga cheklang. Router kaliti frontendga berilmaydi. Kalit hali tayyor bo‘lmasa xarita OSM, routing OSRM fallback bilan ishlaydi.
+Yandex xaritasi uchun `MAP_PROVIDER=yandex`, yo‘l hisoblash uchun `ROUTING_PROVIDER=osrm` va `ROUTING_PROFILE=driving` bo‘lishi kerak. JavaScript API kalitini Yandex kabinetida Render domeniga cheklang. Alohida Yandex Router kaliti kerak emas; routing OSRM orqali ishlaydi. JavaScript kaliti tayyor bo‘lmasa xarita OSM fallback bilan ishlaydi.
+
+Yandex xaritasidagi tur tanlagich `sxema`, `satellite` va `hybrid` rejimlarini beradi. Sxema `admin` uslubida ochilib davlat va hududiy chegaralarni ajratadi. O‘zbekiston ADM0 konturi Yandex borders moduli orqali, u mavjud bo‘lmasa geoBoundaries simplified GeoJSON orqali qizil uzlukli chiziqda ko‘rsatiladi.
 
 Ilovada hozircha alohida parol almashtirish ekrani yo'q. Shu sabab servis ishga
 tushganda bu ikki env qiymati Supabase'dagi yagona admin bilan sinxronlanadi.
