@@ -16,7 +16,9 @@ services:
       retries: 15
 
   backend:
-    build: ./backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     environment:
       APP_ENV: development
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@database:5432/transit_map

@@ -6,8 +6,10 @@ Loyiha GitHub monorepo va Render xizmatlari uchun tayyorlangan:
 
 - `frontend/` — React 19, TypeScript, Vite, MapLibre, TanStack Query, Recharts;
 - `backend/` — FastAPI, SQLAlchemy async, PostgreSQL/PostGIS, Alembic;
-- `render.yaml` — Render PostgreSQL, Web Service va Static Site blueprint;
+- `render.yaml` — bitta bepul Render Docker Web Service blueprint;
 - `docker-compose.yml` — lokal PostGIS, backend va frontend.
+
+Production’da React frontend FastAPI bilan bitta Render domenidan beriladi, ma’lumotlar esa Supabase PostgreSQL/PostGIS bazasida saqlanadi.
 
 ## Asosiy imkoniyatlar
 
