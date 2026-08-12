@@ -24,7 +24,8 @@ def user_payload(user: User) -> dict:
 @router.post("/login")
 @limiter.limit("5/minute")
 async def login(request: Request, payload: LoginRequest, response: Response, db: AsyncSession = Depends(get_db)) -> dict:
-    user = await db.scalar(select(User).where(User.email == payload.email.lower()))
+    email = str(payload.email).strip().lower()
+    user = await db.scalar(select(User).where(User.email == email))
     if not user or not user.is_active or not verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Email yoki parol noto'g'ri")
     user.last_login_at = datetime.now(UTC)
