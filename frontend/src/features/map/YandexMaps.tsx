@@ -11,7 +11,7 @@ function addUzbekistanBorder(ymaps: AnyObject, map: AnyObject): void {
   if (!ymaps.geoQuery) return
   const add = (result: AnyObject) => {
     const border = ymaps.geoQuery(result)
-    border.setOptions({ fillOpacity: 0, strokeColor: '#ff334e', strokeWidth: 4, strokeOpacity: .95, strokeStyle: 'dash' })
+    border.setOptions({ fillOpacity: 0, strokeColor: '#ff1f47', strokeWidth: 6, strokeOpacity: 1, strokeStyle: 'dash' })
     border.addToMap(map)
   }
   const fallback = async () => {
@@ -31,9 +31,17 @@ export function YandexTransitMap({ apiKey, posts = empty, corridors = empty, sel
   const ymapsRef = useRef<AnyObject | null>(null)
   const corridorObjects = useRef<AnyObject | null>(null)
   const postObjects = useRef<AnyObject | null>(null)
+  const lastFitKeyRef = useRef('')
   const [ready, setReady] = useState(false)
   const [fullscreen, setFullscreen] = useState(false)
   const fitUzbekistan = useCallback(() => mapRef.current?.setBounds([[36.6, 55.8], [45.7, 73.3]], { checkZoomRange: true, zoomMargin: 32 }), [])
+
+  useEffect(() => {
+    const close = (event: KeyboardEvent) => { if (event.key === 'Escape') setFullscreen(false) }
+    document.body.style.overflow = fullscreen ? 'hidden' : ''
+    window.addEventListener('keydown', close)
+    return () => { document.body.style.overflow = ''; window.removeEventListener('keydown', close) }
+  }, [fullscreen])
 
   useEffect(() => {
     let live = true
@@ -76,10 +84,12 @@ export function YandexTransitMap({ apiKey, posts = empty, corridors = empty, sel
       glow.events.add('click', () => onCorridorSelect?.(properties as Record<string, unknown>))
       collection.add(glow); collection.add(line)
     }
-    if (bounds.length) {
+    const fitKey = corridors.features.map((feature) => String(feature.properties?.id || '')).join('|')
+    if (bounds.length && fitKey !== lastFitKeyRef.current) {
       const lats = bounds.map((p) => p[0]); const lngs = bounds.map((p) => p[1])
       mapRef.current?.setBounds([[Math.min(...lats), Math.min(...lngs)], [Math.max(...lats), Math.max(...lngs)]], { checkZoomRange: true, zoomMargin: 70 })
     }
+    lastFitKeyRef.current = fitKey
   }, [corridors, onCorridorSelect, ready, selectedId])
 
   useEffect(() => {
@@ -87,18 +97,19 @@ export function YandexTransitMap({ apiKey, posts = empty, corridors = empty, sel
     const collection = postObjects.current
     if (!ready || !ymaps || !collection) return
     collection.removeAll()
-    const clusterer = new ymaps.Clusterer({ preset: 'islands#darkBlueClusterIcons', groupByCoordinates: false })
-    const placemarks: AnyObject[] = []
     for (const feature of posts.features) {
       if (feature.geometry.type !== 'Point') continue
       const [lng, lat] = feature.geometry.coordinates
       const p = feature.properties || {}
       const permissions = [p.allow_passenger_vehicles ? 'Yengil transport' : '', p.allow_cargo_vehicles ? 'Yuk transporti' : ''].filter(Boolean).join(' · ')
       const balloon = `<div class="map-popup"><small>${safeHtml(p.post_type)}</small><strong>${safeHtml(p.post_code)} · ${safeHtml(p.post_name)}</strong><span>Kirish: ${safeHtml(p.entry_count || 0)} · Chiqish: ${safeHtml(p.exit_count || 0)}</span>${p.post_type === 'CHBP' ? `<span>Ruxsat: ${safeHtml(permissions || 'Belgilanmagan')}</span>` : ''}<b>Jami oqim: ${safeHtml(p.total_flow || 0)}</b></div>`
-      const preset = p.post_type === 'CHBP' ? 'islands#redCircleDotIcon' : p.post_type === 'PORT' ? 'islands#greenCircleDotIcon' : 'islands#blueCircleDotIcon'
-      placemarks.push(new ymaps.Placemark([lat, lng], { balloonContent: balloon, hintContent: safeHtml(p.post_name) }, { preset }))
+      const flow = Number(p.total_flow || 0)
+      const size = Math.round(16 + Math.min(32, Math.log10(flow + 1) * 10))
+      const color = p.post_type === 'CHBP' ? '#fb4058' : p.post_type === 'PORT' ? '#34d399' : p.post_type === 'TIF' ? '#a78bfa' : '#38bdf8'
+      const label = flow >= 1000 ? `${Math.round(flow / 1000)}k` : flow > 0 ? String(flow) : ''
+      const sphere = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}"><defs><radialGradient id="g" cx="32%" cy="24%"><stop offset="0" stop-color="#fff" stop-opacity=".95"/><stop offset=".22" stop-color="${color}"/><stop offset=".72" stop-color="${color}"/><stop offset="1" stop-color="#061523"/></radialGradient><filter id="s"><feGaussianBlur stdDeviation="1.3"/></filter></defs><circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 1}" fill="${color}" opacity=".45" filter="url(#s)"/><circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 3}" fill="url(#g)" stroke="#fff" stroke-width="1.4"/><text x="50%" y="56%" text-anchor="middle" font-family="Arial,sans-serif" font-size="${Math.max(7, Math.round(size / 4))}" font-weight="700" fill="#fff">${label}</text></svg>`
+      collection.add(new ymaps.Placemark([lat, lng], { balloonContent: balloon, hintContent: `${safeHtml(p.post_name)} · ${flow.toLocaleString('uz-UZ')} ta oqim` }, { iconLayout: 'default#image', iconImageHref: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(sphere)}`, iconImageSize: [size, size], iconImageOffset: [-size / 2, -size / 2], zIndex: 400 + flow }))
     }
-    clusterer.add(placemarks); collection.add(clusterer)
   }, [posts, ready])
 
   useEffect(() => { if (ready) setTimeout(() => mapRef.current?.container.fitToViewport(), 0) }, [fullscreen, ready])
@@ -106,8 +117,8 @@ export function YandexTransitMap({ apiKey, posts = empty, corridors = empty, sel
     <div ref={containerRef} className="map-canvas yandex-map" aria-label="Yandex xaritasidagi tranzit yo'laklari" />
     {loading && <div className="map-progress"><span /></div>}
     <div className="map-provider-badge">YANDEX MAPS</div>
-    <div className="map-tools"><button onClick={fitUzbekistan} title="Barcha O'zbekiston"><LocateFixed size={18}/></button><button onClick={() => setFullscreen((v) => !v)} title="To'liq ekran">{fullscreen ? <Minimize2 size={18}/> : <Maximize2 size={18}/>}</button></div>
-    <div className="map-legend"><strong>OQIM ZICHLIGI</strong><span><i className="line low"/> Past</span><span><i className="line mid"/> O'rta</span><span><i className="line high"/> Yuqori</span></div>
+    <div className="map-tools"><button onClick={fitUzbekistan} title="Barcha O'zbekiston" aria-label="O‘zbekistonni to‘liq ko‘rsatish"><LocateFixed size={18}/></button><button className="fullscreen-map-button" onClick={() => setFullscreen((v) => !v)} title={fullscreen ? "Kichik ekranga qaytish" : "Xaritani katta ekranda ochish"} aria-label={fullscreen ? "Kichik ekranga qaytish" : "Xaritani katta ekranda ochish"}>{fullscreen ? <Minimize2 size={18}/> : <Maximize2 size={18}/>}</button></div>
+    <div className="map-legend"><strong>OQIM ZICHLIGI</strong><span><i className="line low"/> Past</span><span><i className="line mid"/> O'rta</span><span><i className="line high"/> Yuqori</span><span><i className="post-sphere"/> Post hajmi</span></div>
   </div>
 }
 

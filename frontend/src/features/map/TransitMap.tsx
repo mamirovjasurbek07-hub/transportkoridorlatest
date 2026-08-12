@@ -28,6 +28,13 @@ function MapLibreTransitMap({ posts = empty, corridors = empty, selectedId, onCo
   const fitUzbekistan = useCallback(() => mapRef.current?.fitBounds([[55.8, 36.6], [73.3, 45.7]], { padding: 32, duration: 700 }), [])
 
   useEffect(() => {
+    const close = (event: KeyboardEvent) => { if (event.key === 'Escape') setFullscreen(false) }
+    document.body.style.overflow = fullscreen ? 'hidden' : ''
+    window.addEventListener('keydown', close)
+    return () => { document.body.style.overflow = ''; window.removeEventListener('keydown', close) }
+  }, [fullscreen])
+
+  useEffect(() => {
     if (!containerRef.current || mapRef.current) return
     const map = new maplibregl.Map({ container: containerRef.current, style: getMapStyle(), center: [64.6, 41.2], zoom: 5.2, minZoom: 3, maxZoom: 15, attributionControl: false })
     mapRef.current = map
@@ -35,14 +42,26 @@ function MapLibreTransitMap({ posts = empty, corridors = empty, selectedId, onCo
     map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right')
     map.on('load', () => {
       map.addSource('corridors', { type: 'geojson', data: empty })
-      map.addLayer({ id: 'corridor-glow', type: 'line', source: 'corridors', paint: { 'line-color': ['coalesce', ['get', 'color'], '#22d3ee'], 'line-width': ['interpolate', ['linear'], ['get', 'declaration_count'], 1, 7, 100, 13, 1000, 25], 'line-offset': ['coalesce', ['get', 'display_offset'], 0], 'line-blur': 8, 'line-opacity': 0.46 } })
-      map.addLayer({ id: 'corridor-core', type: 'line', source: 'corridors', paint: { 'line-color': ['coalesce', ['get', 'color'], '#22d3ee'], 'line-width': ['interpolate', ['linear'], ['get', 'declaration_count'], 1, 2.5, 100, 5, 1000, 12], 'line-offset': ['coalesce', ['get', 'display_offset'], 0], 'line-opacity': 1 } })
-      map.addLayer({ id: 'corridor-flow', type: 'line', source: 'corridors', paint: { 'line-color': '#f5feff', 'line-width': ['interpolate', ['linear'], ['get', 'declaration_count'], 1, 1, 1000, 2.8], 'line-offset': ['coalesce', ['get', 'display_offset'], 0], 'line-opacity': 0.96, 'line-dasharray': [0.8, 2.3] } })
-      map.addLayer({ id: 'selected-corridor', type: 'line', source: 'corridors', filter: ['==', ['get', 'id'], ''], paint: { 'line-color': '#ffffff', 'line-width': 5, 'line-offset': ['coalesce', ['get', 'display_offset'], 0], 'line-opacity': 1 } })
-      map.addSource('posts', { type: 'geojson', data: empty, cluster: true, clusterRadius: 48, clusterMaxZoom: 8 })
+      map.addLayer({ id: 'corridor-glow', type: 'line', source: 'corridors', paint: { 'line-color': ['coalesce', ['get', 'color'], '#22d3ee'], 'line-width': ['interpolate', ['linear'], ['get', 'declaration_count'], 1, 7, 100, 13, 1000, 25], 'line-blur': 8, 'line-opacity': 0.46 } })
+      map.addLayer({ id: 'corridor-core', type: 'line', source: 'corridors', paint: { 'line-color': ['coalesce', ['get', 'color'], '#22d3ee'], 'line-width': ['interpolate', ['linear'], ['get', 'declaration_count'], 1, 2.5, 100, 5, 1000, 12], 'line-opacity': 1 } })
+      map.addLayer({ id: 'corridor-flow', type: 'line', source: 'corridors', paint: { 'line-color': '#f5feff', 'line-width': ['interpolate', ['linear'], ['get', 'declaration_count'], 1, 1, 1000, 2.8], 'line-opacity': 0.96, 'line-dasharray': [0.8, 2.3] } })
+      map.addLayer({ id: 'selected-corridor', type: 'line', source: 'corridors', filter: ['==', ['get', 'id'], ''], paint: { 'line-color': '#ffffff', 'line-width': 5, 'line-opacity': 1 } })
+      map.addSource('posts', { type: 'geojson', data: empty, cluster: true, clusterRadius: 42, clusterMaxZoom: 4 })
       map.addLayer({ id: 'post-clusters', type: 'circle', source: 'posts', filter: ['has', 'point_count'], paint: { 'circle-color': '#102f4f', 'circle-radius': ['step', ['get', 'point_count'], 16, 10, 21, 30, 27], 'circle-stroke-width': 2, 'circle-stroke-color': '#38bdf8' } })
       map.addLayer({ id: 'cluster-count', type: 'symbol', source: 'posts', filter: ['has', 'point_count'], layout: { 'text-field': ['get', 'point_count_abbreviated'], 'text-size': 12 }, paint: { 'text-color': '#e8f7ff' } })
-      map.addLayer({ id: 'post-points', type: 'circle', source: 'posts', filter: ['!', ['has', 'point_count']], paint: { 'circle-color': ['match', ['get', 'post_type'], 'CHBP', '#fb4058', 'AERO', '#fbbf24', 'RW', '#a78bfa', 'PORT', '#34d399', '#38bdf8'], 'circle-radius': ['interpolate', ['linear'], ['zoom'], 4, 4, 10, 8], 'circle-stroke-width': 2, 'circle-stroke-color': '#e8fdff' } })
+      map.addLayer({ id: 'post-flow-glow', type: 'circle', source: 'posts', filter: ['!', ['has', 'point_count']], paint: { 'circle-color': ['match', ['get', 'post_type'], 'CHBP', '#fb4058', 'AERO', '#fbbf24', 'RW', '#a78bfa', 'PORT', '#34d399', '#38bdf8'], 'circle-radius': ['interpolate', ['linear'], ['get', 'total_flow'], 0, 9, 10, 12, 100, 18, 1000, 27], 'circle-blur': .8, 'circle-opacity': .45 } })
+      map.addLayer({ id: 'post-points', type: 'circle', source: 'posts', filter: ['!', ['has', 'point_count']], paint: { 'circle-color': ['match', ['get', 'post_type'], 'CHBP', '#fb4058', 'AERO', '#fbbf24', 'RW', '#a78bfa', 'PORT', '#34d399', '#38bdf8'], 'circle-radius': ['interpolate', ['linear'], ['get', 'total_flow'], 0, 5, 10, 7, 100, 11, 1000, 18], 'circle-stroke-width': 2, 'circle-stroke-color': '#e8fdff' } })
+
+      void fetch('https://www.geoboundaries.org/api/current/gbOpen/UZB/ADM0/')
+        .then((response) => response.json())
+        .then((metadata) => fetch(String(metadata.simplifiedGeometryGeoJSON)))
+        .then((response) => response.json())
+        .then((border) => {
+          if (mapRef.current !== map || map.getSource('uzbekistan-border')) return
+          map.addSource('uzbekistan-border', { type: 'geojson', data: border })
+          map.addLayer({ id: 'uzbekistan-border-line', type: 'line', source: 'uzbekistan-border', paint: { 'line-color': '#ff1f47', 'line-width': 4.5, 'line-opacity': .95, 'line-dasharray': [2, 1.4] } })
+        })
+        .catch(() => undefined)
 
       const corridorClick = (event: MapLayerMouseEvent) => onCorridorSelect?.((event.features?.[0]?.properties || null) as Record<string, unknown> | null)
       map.on('click', 'corridor-core', corridorClick)
@@ -97,9 +116,9 @@ function MapLibreTransitMap({ posts = empty, corridors = empty, selectedId, onCo
       {loading && <div className="map-progress"><span /></div>}
       <div className="map-tools">
         <button onClick={fitUzbekistan} title="Barcha O'zbekiston"><LocateFixed size={18} /></button>
-        <button onClick={() => setFullscreen((v) => !v)} title="To'liq ekran">{fullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}</button>
+        <button className="fullscreen-map-button" onClick={() => setFullscreen((v) => !v)} title={fullscreen ? "Kichik ekranga qaytish" : "Xaritani katta ekranda ochish"} aria-label={fullscreen ? "Kichik ekranga qaytish" : "Xaritani katta ekranda ochish"}>{fullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}</button>
       </div>
-      <div className="map-legend"><strong>OQIM ZICHLIGI</strong><span><i className="line low" /> Past</span><span><i className="line mid" /> O'rta</span><span><i className="line high" /> Yuqori</span></div>
+      <div className="map-legend"><strong>OQIM ZICHLIGI</strong><span><i className="line low" /> Past</span><span><i className="line mid" /> O'rta</span><span><i className="line high" /> Yuqori</span><span><i className="post-sphere" /> Post hajmi</span></div>
     </div>
   )
 }
