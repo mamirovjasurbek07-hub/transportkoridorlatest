@@ -85,44 +85,55 @@ Majburiy mappinglar: declaration number/date, origin/destination ISO-2, entry/ex
 2. Ushbu papkadagi barcha fayllarni commit/push qiling.
 3. `.env` faylini push qilmang; `.env.example` faqat namuna.
 
+### Supabase database
+
+1. Supabase’da bepul loyiha yarating.
+2. SQL Editor’da `create extension if not exists postgis with schema extensions;` bajaring.
+3. `Connect → Session pooler` URI qiymatini oling. Bepul loyiha bilan IPv4 orqali ishlashi uchun `5432` portli Session pooler ishlatiladi.
+4. Shu URI’ni Render’dagi `DATABASE_URL` qiymatiga kiriting va `DATABASE_SSL=true` qiling.
+
+Supabase `anon key` yoki `service_role key` kerak emas: FastAPI PostgreSQL’ga SQLAlchemy orqali server tomondan ulanadi.
+
 ### Blueprint
 
-Render Dashboard’da `New → Blueprint` tanlab GitHub repositoryni ulang. `render.yaml` PostgreSQL, FastAPI Web Service va React Static Site yaratadi.
+Render Dashboard’da `New → Blueprint` tanlab GitHub repositoryni ulang. `render.yaml` frontend va backendni bitta bepul Docker Web Service sifatida yaratadi. Sayt va API bir xil `https://transportyo-laklari.onrender.com` domenida ishlaydi.
 
 Blueprint so‘ragan qiymatlar:
 
-- `ADMIN_INITIAL_EMAIL`;
-- `ADMIN_INITIAL_PASSWORD` — kuchli va noyob;
-- backend `CORS_ORIGINS` va `FRONTEND_URL` — frontendning `https://...onrender.com` domeni;
-- frontend `VITE_API_BASE_URL` — `https://<backend>.onrender.com/api`;
-- `VITE_MAP_STYLE_URL` — ixtiyoriy production tile style URL.
+- `DATABASE_URL` — Supabase Session pooler URI;
+- `ADMIN_INITIAL_EMAIL` — Render'dagi amaldagi admin emaili;
+- `ADMIN_INITIAL_PASSWORD` — Render'dagi amaldagi, kuchli va noyob admin paroli.
 
-`SECRET_KEY` Render tomonidan yaratiladi. `DATABASE_URL` database’dan avtomatik olinadi.
+Ilovada hozircha alohida parol almashtirish ekrani yo'q. Shu sabab servis ishga
+tushganda bu ikki env qiymati Supabase'dagi yagona admin bilan sinxronlanadi.
+Kirish ma'lumotini tiklash uchun Render'da ikkala qiymatni yangilang va yangi
+deploy ishga tushiring. Supabase'ga ochiq parol yozilmaydi.
+
+`SECRET_KEY` Render tomonidan avtomatik yaratiladi.
 
 ### Qo‘lda yaratish
 
-Backend Web Service:
+Docker Web Service:
 
-- Root Directory: `backend`
-- Build: `pip install -r requirements.txt`
-- Pre-deploy: `alembic upgrade head`
-- Start: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+- Name: `transportyo-laklari`
+- Language: `Docker`
+- Branch: `main`
+- Region: `Singapore`
+- Root Directory: bo‘sh
+- Dockerfile Path: `backend/Dockerfile`
+- Instance Type: `Free`
 - Health Check: `/api/health`
 
-Frontend Static Site:
-
-- Root Directory: `frontend`
-- Build: `npm ci && npm run build`
-- Publish Directory: `dist`
-- Rewrite: `/* → /index.html` (200 Rewrite)
+Docker image frontendni build qiladi, FastAPI fayllari bilan birlashtiradi va container ishga tushishida `alembic upgrade head` migratsiyasini avtomatik bajaradi.
 
 ### Birinchi deploy tekshiruvi
 
-1. Backend logida migration va health muvaffaqiyatli ekanini tekshiring.
+1. Render logida frontend build, migration va health muvaffaqiyatli ekanini tekshiring.
 2. `/api/health` `status: ok` qaytarishi kerak.
 3. Public frontendda mock corridorlar chiqishi kerak.
 4. `/admin/login` orqali kiring.
 5. Birinchi production login’dan keyin initial parolni almashtiring.
 
-`ENABLE_DEMO_SEED=true` seedni idempotent ishlatadi. Real ma’lumotga o‘tganda uni `false` qiling. Frontend/backend alohida Render domenlarida bo‘lsa `COOKIE_SECURE=true` bo‘lishi shart. Eng ishonchli production variant — `app.example.uz` va `api.example.uz` kabi bitta custom domain subdomainlari.
+`ENABLE_DEMO_SEED=true` seedni idempotent ishlatadi. Real ma’lumotga o‘tganda uni `false` qiling. Production’da `COOKIE_SECURE=true` va `COOKIE_SAMESITE=lax` bo‘lishi kerak.
 
+Demo seed `DEMO_V2` manbasi bilan 10 000 ta deklaratsiya va 12 ta mamlakat juftligini yaratadi. Oldingi `MOCK` yozuvlari yangi versiya birinchi marta ishga tushganda almashtiriladi. `/api/countries` Excel ma’lumotnomasidagi 252 ta yozuvni numeric, alpha-2, alpha-3 va xarita markaz koordinatalari bilan qaytaradi; mamlakat markazi routing waypointi sifatida ishlatilmaydi.
