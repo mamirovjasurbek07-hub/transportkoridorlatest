@@ -18,6 +18,9 @@ Production’da React frontend FastAPI bilan bitta Render domenidan beriladi, ma
 - filter holatini URL query-param orqali ulashish;
 - oqim hajmiga mos qalinlikdagi glow/core/animated corridor layerlar;
 - post clustering va post ma’lumotlari popup’i;
+- public xarita dastlab faqat bojxona postlarini ko‘rsatadi; bitta corridor yoki tashuv hajmi bo‘yicha `Top-5 yo‘lak` alohida tanlanadi;
+- boshlanish davlati tanlangach tugash davlatlari bazadagi mavjud corridor guruhlaridan avtomatik torayadi; masalan, `CN → AF` guruhidagi barcha alternativ corridorlar birga ko‘rsatiladi;
+- post markerlari kirish+chiqish oqimiga mos kattalashadigan sfera ko‘rinishida, xarita esa katta-ekran tugmasi va `Esc` bilan yopish imkoniyatiga ega;
 - ISO-2, raqamli kod yoki nom bo‘yicha tezkor davlat qidiruvi (`UZ - 860 - O'ZBEKISTON`);
 - Yandex sxema/satellite/hybrid rejimlari, ma’muriy chegaralar va qizil uzlukli O‘zbekiston konturi;
 - route yo‘q bo‘lsa to‘g‘ri chiziq chizmasdan `review` holati;
@@ -26,7 +29,7 @@ Production’da React frontend FastAPI bilan bitta Render domenidan beriladi, ma
 - admin post CRUD, xaritadan lokatsiya, corridor waypoint muharriri;
 - CSV analytics va GeoJSON corridor eksporti;
 - Excel ma'lumotnomasi asosidagi 252 ta mamlakat kodi va xarita markaz koordinatasi;
-- 93 ta bojxona posti, 52 ta tekshirilgan demo corridor va 10 000 ta versiyali mock deklaratsiya;
+- 93 ta bojxona posti, OSRM tomonidan avtomatik quriladigan 52 ta demo corridor va 10 000 ta versiyali mock deklaratsiya;
 - idempotent post/corridor/mock seed.
 
 ## Docker bilan ishga tushirish
@@ -89,14 +92,16 @@ npm run dev
 
 ## Foydalanuvchi yo‘riqnomasi
 
-Public sahifada boshlanish/tugash davlati va sanani tanlab `Qo‘llash` bosing. Bir davlat juftligi uchun mavjud barcha post kombinatsiyalari alohida rang va yonlama offset bilan birga chiziladi. Xalqaro shablonlar xorijiy logistika gatewayidan O‘zbekiston postlari va tranzit yo‘li orqali keyingi gatewaygacha saqlangan OSRM geometriyasidan foydalanadi. Yo‘lak bosilganda post nomlari, transport ruxsati, oqim, ulush, masofa hamda minimal/o‘rtacha/maksimal tranzit vaqti ochiladi.
+Public sahifa dastlab corridor chizmasdan faqat bojxona postlarini ko‘rsatadi. Bitta corridorni tanlang yoki tashuv hajmi eng katta beshta post yo‘nalishini `Top-5 yo‘lak` orqali oching. Chiziqlar yon tomonga surilmaydi va OSRM geometriyasining aynan ustida chiziladi. Yo‘lak bosilganda post nomlari, transport ruxsati, oqim, ulush, masofa hamda minimal/o‘rtacha/maksimal tranzit vaqti ochiladi.
+
+Davlat filtri ikki bosqichli ishlaydi: avval boshlanish davlati tanlanadi, so‘ng faqat shu davlat uchun bazada mavjud tugash davlatlari chiqadi. `Qo‘llash` tanlangan davlat juftligini bitta yo‘nalish guruhi sifatida ochadi va guruhdagi barcha alternativ corridorlarni xaritada ko‘rsatadi. Chegara GeoJSON’i brauzerdan GitHub’ga so‘ralmaydi; backend proxy orqali olinib 24 soat keshlanadi.
 
 Admin sahifada:
 
-1. `Bojxona postlari` bo‘limida yangi post yarating. Xaritani bosing yoki latitude/longitude kiriting — marker va fokus darhol yangilanadi. CHBP uchun yengil va/yoki yuk transporti ruxsatini belgilang. Mavjud post koordinatasi o‘zgarsa bog‘langan faol yo‘laklar qayta hisoblanadi.
+1. `Bojxona postlari` bo‘limida yangi post yarating. Xaritani bosing yoki `41.310617600000036, 69.21984867557755` formatida koordinatani bitta maydonga kiriting — marker va fokus darhol yangilanadi. CHBP uchun yengil va/yoki yuk transporti ruxsatini belgilang. Mavjud post koordinatasi o‘zgarsa bog‘langan faol yo‘laklar qayta hisoblanadi.
 2. `Korridorlar` bo‘limida yuk boshlanadigan/tugaydigan davlatlar hamda entry/exit postlarni tanlang. Davlat kodi (`UZ`), raqamli kodi (`860`) yoki nomini yozib qidiring.
 3. `Boshlanish`, `Kirish posti`, `Oraliq/TIF`, `Chiqish posti` yoki `Tugash` rejimini tanlang. Xaritadagi post markerini bosish postni shu rolga avtomatik bog‘laydi. Postga bog‘langan route nuqtasi backendda ham bazadagi aniq post koordinatasiga snap qilinadi.
-4. Oddiy nuqtalarni sudrang; nuqta qatoridagi `+` bilan aynan undan keyin yangi VIA qo‘shing, strelkalar bilan tartiblang yoki `×` bilan olib tashlang. `Avtomobil yo‘lini ko‘rish` barcha nuqtalarni OSRM qaytargan real yo‘l geometriyasi bilan bog‘laydi; so‘ng `Bazaga saqlash` tugmasini bosing.
+4. Oddiy nuqtalarni sudrang; nuqta qatoridagi `+` bilan aynan undan keyin yangi VIA qo‘shing, strelkalar bilan tartiblang yoki `×` bilan olib tashlang. Yandex xaritasida corridor chizig‘ining ustini bosish ham eng yaqin segmentga VIA qo‘shadi. Har bir o‘zgarishdan 700 ms keyin barcha nuqtalar OSRM qaytargan real avtomobil yo‘li bilan avtomatik qayta bog‘lanadi; yangi javob kelguncha chiziq va foydalanuvchi tanlagan xarita masshtabi saqlanadi. So‘ng `Bazaga saqlash` tugmasini bosing.
 5. Oldin saqlangan geometriyalarni yangilash uchun corridorlar sahifasidagi `Barcha yo‘llarni yangilash` tugmasidan foydalaning. So‘rovlar Render va routerga og‘irlik qilmasligi uchun 5 tadan yuboriladi.
 6. Router route topmasa geometriya saqlanmaydi va corridor review holatiga o‘tadi.
 7. `Audit jurnali` barcha asosiy admin harakatlarini ko‘rsatadi.
@@ -113,6 +118,10 @@ ROUTING_PROFILE=driving
 ```
 
 JavaScript API kalitining domain chekloviga Render bergan domenni protokolsiz kiriting, masalan `transportyo-laklari.onrender.com`. `YANDEX_ROUTER_API_KEY` kerak emas: Yandex faqat xarita uchun, avtomobil yo‘li hisoblash esa OSRM orqali bajariladi. JavaScript kaliti sozlanmagan bo‘lsa xarita OSM'ga qaytadi.
+
+Production startup eski qo‘lda yozilgan `verified-osrm-seed-v2/v3/v4` geometriyalarini darhol bekor qiladi. Background migratsiya demo corridorlarni OSRM Route API orqali soniyasiga ko‘pi bilan bitta tashqi so‘rov bilan qayta quradi. Public sahifa shu vaqtda noto‘g‘ri straight-line chizmaydi va tayyor bo‘lmagan route’larni 15 soniyada qayta tekshiradi.
+
+Public analytics `posts`, `top5` va tanlangan corridor rejimlariga bo‘lingan. Dastlab geometriya yuborilmaydi; corridor katalogi waypoint va geometrysiz olinadi. PostGIS geometriyalari bitta batch SQL so‘rovda o‘qiladi, 1 KB dan katta javoblar GZip qilinadi va Supabase connection pool `3 + 2 overflow` bilan cheklangan.
 
 ## Testlar
 
