@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { LocateFixed, Maximize2, Minimize2 } from 'lucide-react'
+import { api } from '../../api'
 import type { CustomsPost, FeatureCollection, Waypoint } from '../../types'
 import { loadYandexMaps, safeHtml } from './mapProvider'
 
@@ -14,13 +15,7 @@ function addUzbekistanBorder(ymaps: AnyObject, map: AnyObject): void {
     border.setOptions({ fillOpacity: 0, strokeColor: '#ff1f47', strokeWidth: 6, strokeOpacity: 1, strokeStyle: 'dash' })
     border.addToMap(map)
   }
-  const fallback = async () => {
-    try {
-      const metadata = await fetch('https://www.geoboundaries.org/api/current/gbOpen/UZB/ADM0/').then((response) => response.json())
-      const geojson = await fetch(String(metadata.simplifiedGeometryGeoJSON)).then((response) => response.json())
-      add(geojson)
-    } catch { /* Yandex admin layer still shows the administrative border. */ }
-  }
+  const fallback = async () => { try { add(await api<GeoJSON.FeatureCollection>('/map/uzbekistan-border')) } catch { /* Yandex admin layer still shows the administrative border. */ } }
   if (ymaps.borders?.load) void ymaps.borders.load('UZ', { lang: 'ru', quality: 2 }).then(add, fallback)
   else void fallback()
 }
@@ -104,10 +99,11 @@ export function YandexTransitMap({ apiKey, posts = empty, corridors = empty, sel
       const permissions = [p.allow_passenger_vehicles ? 'Yengil transport' : '', p.allow_cargo_vehicles ? 'Yuk transporti' : ''].filter(Boolean).join(' · ')
       const balloon = `<div class="map-popup"><small>${safeHtml(p.post_type)}</small><strong>${safeHtml(p.post_code)} · ${safeHtml(p.post_name)}</strong><span>Kirish: ${safeHtml(p.entry_count || 0)} · Chiqish: ${safeHtml(p.exit_count || 0)}</span>${p.post_type === 'CHBP' ? `<span>Ruxsat: ${safeHtml(permissions || 'Belgilanmagan')}</span>` : ''}<b>Jami oqim: ${safeHtml(p.total_flow || 0)}</b></div>`
       const flow = Number(p.total_flow || 0)
-      const size = Math.round(16 + Math.min(32, Math.log10(flow + 1) * 10))
+      const size = Math.round(12 + Math.min(14, Math.log10(flow + 1) * 4))
       const color = p.post_type === 'CHBP' ? '#fb4058' : p.post_type === 'PORT' ? '#34d399' : p.post_type === 'TIF' ? '#a78bfa' : '#38bdf8'
-      const label = flow >= 1000 ? `${Math.round(flow / 1000)}k` : flow > 0 ? String(flow) : ''
-      const sphere = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}"><defs><radialGradient id="g" cx="32%" cy="24%"><stop offset="0" stop-color="#fff" stop-opacity=".95"/><stop offset=".22" stop-color="${color}"/><stop offset=".72" stop-color="${color}"/><stop offset="1" stop-color="#061523"/></radialGradient><filter id="s"><feGaussianBlur stdDeviation="1.3"/></filter></defs><circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 1}" fill="${color}" opacity=".45" filter="url(#s)"/><circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 3}" fill="url(#g)" stroke="#fff" stroke-width="1.4"/><text x="50%" y="56%" text-anchor="middle" font-family="Arial,sans-serif" font-size="${Math.max(7, Math.round(size / 4))}" font-weight="700" fill="#fff">${label}</text></svg>`
+      const thousands = flow / 1000
+      const label = flow >= 1000 ? `${Number(thousands.toFixed(thousands < 10 ? 1 : 0)).toLocaleString('uz-UZ')} ming` : flow > 0 ? flow.toLocaleString('uz-UZ') : ''
+      const sphere = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}"><defs><radialGradient id="g" cx="32%" cy="24%"><stop offset="0" stop-color="#fff" stop-opacity=".88"/><stop offset=".24" stop-color="${color}"/><stop offset=".78" stop-color="${color}"/><stop offset="1" stop-color="#061523"/></radialGradient></defs><circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 1.5}" fill="url(#g)" stroke="#fff" stroke-width="1"/><text x="50%" y="55%" text-anchor="middle" font-family="Arial,sans-serif" font-size="${label.length > 5 ? 4.7 : Math.max(5.5, Math.round(size / 4.2))}" font-weight="700" fill="#fff">${label}</text></svg>`
       collection.add(new ymaps.Placemark([lat, lng], { balloonContent: balloon, hintContent: `${safeHtml(p.post_name)} · ${flow.toLocaleString('uz-UZ')} ta oqim` }, { iconLayout: 'default#image', iconImageHref: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(sphere)}`, iconImageSize: [size, size], iconImageOffset: [-size / 2, -size / 2], zIndex: 400 + flow }))
     }
   }, [posts, ready])
