@@ -47,6 +47,9 @@ export interface Corridor {
   exit_post_code: string
   status: string
   color?: string
+  routing_provider?: string
+  routing_profile?: 'driving' | 'truck'
+  geometry_source?: string
   geometry?: GeoJSON.LineString
   distance_meters?: number
   duration_seconds?: number
