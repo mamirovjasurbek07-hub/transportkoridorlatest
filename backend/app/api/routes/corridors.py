@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from geoalchemy2.functions import ST_AsGeoJSON, ST_GeomFromGeoJSON, ST_SetSRID, ST_MakePoint
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import noload, selectinload
 
 from app.database import get_db
 from app.dependencies import admin_user, csrf_protect
@@ -41,12 +41,14 @@ async def corridor_dict(db: AsyncSession, corridor: Corridor, include_geometry: 
 
 
 @router.get("")
-async def list_corridors(active_only: bool = True, db: AsyncSession = Depends(get_db)) -> dict:
+async def list_corridors(active_only: bool = True, include_geometry: bool = True, db: AsyncSession = Depends(get_db)) -> dict:
     query = select(Corridor).order_by(Corridor.priority, Corridor.name)
+    if not include_geometry:
+        query = query.options(noload(Corridor.waypoints))
     if active_only:
         query = query.where(Corridor.is_active.is_(True))
     rows = (await db.scalars(query)).unique().all()
-    return {"items": [await corridor_dict(db, c) for c in rows], "total": len(rows)}
+    return {"items": [await corridor_dict(db, c, include_geometry=include_geometry) for c in rows], "total": len(rows)}
 
 
 @router.post("/preview", dependencies=[Depends(csrf_protect)])

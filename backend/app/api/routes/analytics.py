@@ -5,8 +5,9 @@ from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from geoalchemy2.functions import ST_AsGeoJSON
-from sqlalchemy import extract, func, select
+from sqlalchemy import extract, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import noload
 
 from app.database import get_db
 from app.models import Corridor, CustomsPost, TransitDeclaration
@@ -36,12 +37,16 @@ def declaration_filters(date_from: date, date_to: date, origin: str | None, dest
     return filters
 
 
-async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, origin: str | None, destination: str | None, entry: str | None, exit: str | None, corridor_code: str | None) -> dict:
+async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, origin: str | None, destination: str | None, entry: str | None, exit: str | None, corridor_code: str | None, map_mode: str = "all") -> dict:
     validate_dates(date_from, date_to)
     filters = declaration_filters(date_from, date_to, origin, destination, entry, exit)
     selected_corridor = None
     if corridor_code:
-        selected_corridor = await db.scalar(select(Corridor).where(Corridor.code == corridor_code, Corridor.is_active.is_(True)))
+        selected_corridor = await db.scalar(
+            select(Corridor).options(noload(Corridor.waypoints)).where(
+                Corridor.code == corridor_code, Corridor.is_active.is_(True)
+            )
+        )
         if selected_corridor is None:
             raise HTTPException(status_code=404, detail="Korridor topilmadi")
         filters.extend([
@@ -71,14 +76,19 @@ async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, or
         )
     )).all()
     total = sum(row.count for row in grouped)
-    corridor_query = select(Corridor).where(Corridor.is_active.is_(True))
+    available_corridor_count = await db.scalar(select(func.count()).select_from(Corridor).where(
+        Corridor.is_active.is_(True), Corridor.route_needs_review.is_(False), Corridor.geometry.is_not(None),
+        or_(Corridor.geometry_source.endswith("-router"), Corridor.geometry_source.startswith("post-update-")),
+    )) or 0
+    map_rows = [] if map_mode == "posts" and not corridor_code else sorted(grouped, key=lambda row: row.count, reverse=True)[:5] if map_mode == "top5" and not corridor_code else grouped
+    corridor_query = select(Corridor).options(noload(Corridor.waypoints)).where(Corridor.is_active.is_(True))
     if corridor_code:
         corridor_query = corridor_query.where(Corridor.code == corridor_code)
     if origin:
         corridor_query = corridor_query.where(Corridor.origin_country_code == origin.upper())
     if destination:
         corridor_query = corridor_query.where(Corridor.destination_country_code == destination.upper())
-    corridors = (await db.scalars(corridor_query)).all()
+    corridors = [] if not map_rows else (await db.scalars(corridor_query)).all()
     corridors_by_pair: dict[tuple[str | None, str | None, str, str], list[Corridor]] = {}
     for c in sorted(corridors, key=lambda item: item.priority):
         corridors_by_pair.setdefault(
@@ -87,9 +97,17 @@ async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, or
     post_rows = (await db.scalars(select(CustomsPost).where(CustomsPost.is_active.is_(True), CustomsPost.latitude.is_not(None)))).all()
     posts_by_code = {post.post_code: post for post in post_rows}
     post_names = {code: post.post_name for code, post in posts_by_code.items()}
+    valid_geometry_corridors = [corridor for corridor in corridors if corridor.geometry is not None and not corridor.route_needs_review and (corridor.geometry_source.endswith("-router") or corridor.geometry_source.startswith("post-update-"))]
+    geometry_by_id = {
+        corridor_id: json.loads(raw)
+        for corridor_id, raw in (await db.execute(
+            select(Corridor.id, ST_AsGeoJSON(Corridor.geometry)).where(Corridor.id.in_([corridor.id for corridor in valid_geometry_corridors]))
+        )).all()
+        if raw
+    } if valid_geometry_corridors else {}
     features = []
     unavailable = []
-    for row in grouped:
+    for row in map_rows:
         matched_corridors = corridors_by_pair.get((
             row.origin_country_code,
             row.destination_country_code,
@@ -99,12 +117,8 @@ async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, or
         candidates: list[Corridor | None] = matched_corridors or [None]
         for corridor in candidates:
             geometry = None
-            router_geometry = bool(corridor and (
-                corridor.geometry_source.endswith("-router") or corridor.geometry_source.startswith("post-update-")
-            ))
-            if corridor and corridor.geometry is not None and not corridor.route_needs_review and router_geometry:
-                raw = await db.scalar(select(ST_AsGeoJSON(Corridor.geometry)).where(Corridor.id == corridor.id))
-                geometry = json.loads(raw) if raw else None
+            if corridor:
+                geometry = geometry_by_id.get(corridor.id)
             properties = {
                 "id": str(corridor.id) if corridor else f"{row.entry_post_code}-{row.exit_post_code}",
                 "code": corridor.code if corridor else None,
@@ -132,15 +146,9 @@ async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, or
                 features.append({"type": "Feature", "geometry": geometry, "properties": properties})
             else:
                 unavailable.append(properties)
-    feature_groups: dict[tuple[str | None, str | None], list[dict]] = {}
-    for feature in features:
-        properties = feature["properties"]
-        feature_groups.setdefault(
-            (properties["origin_country_code"], properties["destination_country_code"]), []
-        ).append(feature)
-    for group in feature_groups.values():
-        for index, feature in enumerate(group):
-            feature["properties"]["display_offset"] = round((index - (len(group) - 1) / 2) * 7, 2)
+    if map_mode == "top5" and not corridor_code:
+        features.sort(key=lambda feature: feature["properties"]["declaration_count"], reverse=True)
+        del features[5:]
     entry_counts: dict[str, int] = {}
     exit_counts: dict[str, int] = {}
     for row in grouped:
@@ -172,7 +180,7 @@ async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, or
     top_corridor = max(features, key=lambda f: f["properties"]["declaration_count"], default=None)
     return {
         "meta": {"date_from": date_from, "date_to": date_to, "refreshed_at": datetime.utcnow().isoformat() + "Z", "unavailable_count": len(unavailable)},
-        "kpis": {"total_declarations": total, "active_corridors": len(features), "entry_posts": len(entry_counts), "exit_posts": len(exit_counts),
+        "kpis": {"total_declarations": total, "active_corridors": available_corridor_count, "entry_posts": len(entry_counts), "exit_posts": len(exit_counts),
             "top_corridor": top_corridor["properties"]["name"] if top_corridor else "—", "avg_transit_minutes": round(sum((r.avg_seconds or 0) * r.count for r in grouped) / total / 60) if total else 0,
             "change_percent": change},
         "corridors": {"type": "FeatureCollection", "features": features}, "posts": posts_geojson, "unavailable_routes": unavailable,
@@ -185,16 +193,18 @@ async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, or
 
 @router.get("")
 async def analytics(
+    response: Response,
     date_from: date = Query(default_factory=lambda: date(date.today().year, 1, 1)),
     date_to: date = Query(default_factory=date.today), origin: str | None = None, destination: str | None = None,
-    entry: str | None = None, exit: str | None = None, corridor: str | None = None, db: AsyncSession = Depends(get_db),
+    entry: str | None = None, exit: str | None = None, corridor: str | None = None, map_mode: str = Query("posts", pattern="^(posts|top5|all)$"), db: AsyncSession = Depends(get_db),
 ) -> dict:
-    return await analytics_payload(db, date_from, date_to, origin, destination, entry, exit, corridor)
+    response.headers["Cache-Control"] = "public, max-age=15, stale-while-revalidate=30"
+    return await analytics_payload(db, date_from, date_to, origin, destination, entry, exit, corridor, map_mode)
 
 
 @router.get("/export.csv")
 async def export_csv(date_from: date, date_to: date, origin: str | None = None, destination: str | None = None, db: AsyncSession = Depends(get_db)) -> Response:
-    data = await analytics_payload(db, date_from, date_to, origin, destination, None, None, None)
+    data = await analytics_payload(db, date_from, date_to, origin, destination, None, None, None, "all")
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(["Kirish posti", "Chiqish posti", "Deklaratsiyalar", "Ulush (%)"])
@@ -206,4 +216,4 @@ async def export_csv(date_from: date, date_to: date, origin: str | None = None, 
 
 @router.get("/corridors.geojson")
 async def export_geojson(date_from: date, date_to: date, db: AsyncSession = Depends(get_db)) -> dict:
-    return (await analytics_payload(db, date_from, date_to, None, None, None, None, None))["corridors"]
+    return (await analytics_payload(db, date_from, date_to, None, None, None, None, None, "all"))["corridors"]
