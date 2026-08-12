@@ -54,7 +54,7 @@ O‘zgartiruvchi so‘rovlar `X-CSRF-Token` headerini talab qiladi. Xato formati
 ## Ma’lumotlar modeli
 
 - `users` — admin/viewer va password hash;
-- `customs_posts` — string post kodi, tipi, coordinates va PostGIS geography point;
+- `customs_posts` — string post kodi, tipi, koordinata, PostGIS geography point va yengil/yuk transport ruxsatlari;
 - `country_gateways` — uzoq davlatlar uchun tasdiqlangan gateway;
 - `corridors` — matching maydonlari, status va PostGIS LineString;
 - `corridor_waypoints` — tartiblangan gateway/entry/via/exit nuqtalar;
@@ -136,4 +136,6 @@ Docker image frontendni build qiladi, FastAPI fayllari bilan birlashtiradi va co
 
 `ENABLE_DEMO_SEED=true` seedni idempotent ishlatadi. Real ma’lumotga o‘tganda uni `false` qiling. Production’da `COOKIE_SECURE=true` va `COOKIE_SAMESITE=lax` bo‘lishi kerak.
 
-Demo seed `DEMO_V3` manbasi bilan 10 000 ta deklaratsiya va 45 ta shablon yo‘lak yaratadi. Ular Qirg‘iziston–Afg‘onistonning 4 ta post kombinatsiyasi, Xitoydan g‘arb/janub tranziti, Rossiya, Kavkaz, Janubiy Osiyo hamda O‘zbekiston–Xitoy/Yevropa/Turkiya/Afg‘oniston yo‘nalishlarini qamrab oladi. Oldingi `MOCK` va `DEMO_V2` yozuvlari yangi versiya birinchi marta ishga tushganda almashtiriladi. `/api/countries` Excel ma’lumotnomasidagi 252 ta yozuvni numeric, alpha-2, alpha-3 va xarita markaz koordinatalari bilan qaytaradi; mamlakat markazi routing waypointi sifatida ishlatilmaydi.
+Demo seed `DEMO_V4` manbasi bilan 10 000 ta deklaratsiya va 52 ta shablon yo‘lak yaratadi. Ular Qirg‘iziston–Afg‘onistonning 4 ta va Qozog‘iston–Turkmanistonning 8 ta post kombinatsiyasi, Xitoydan g‘arb/janub tranziti, Rossiya, Kavkaz, Janubiy Osiyo hamda O‘zbekiston–Xitoy/Yevropa/Turkiya/Afg‘oniston yo‘nalishlarini qamrab oladi. Xalqaro qismlar mamlakat markaziga to‘g‘ri chiziq emas, oldindan olingan OSRM avtomobil yo‘li geometriyasidir. Oldingi demo versiyalar yangi versiya birinchi marta ishga tushganda almashtiriladi. `/api/countries` Excel ma’lumotnomasidagi 252 ta yozuvni qaytaradi; mamlakat markazi routing waypointi sifatida ishlatilmaydi.
+
+Post koordinatasi admin paneldan o‘zgartirilganda shu kodni entry yoki exit sifatida ishlatadigan barcha faol corridor waypointlari yangilanadi va routing qayta hisoblanadi. Muvaffaqiyatsiz route eski noto‘g‘ri geometriya bilan qoldirilmaydi, `REVIEW` holatiga o‘tkaziladi. Admin tomonidan qayta qurilgan `post-update-osrm` geometriya keyingi seed startupida ustidan yozilmaydi.
