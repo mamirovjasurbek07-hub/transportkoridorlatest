@@ -141,7 +141,13 @@ export function YandexLocationPicker({ apiKey, latitude, longitude, onChange }: 
       const map = new ymaps.Map(container.current, { center: hasPoint ? [latitude, longitude] : [41.2, 64.6], zoom: hasPoint ? 9 : 5, controls: ['zoomControl'] }, { suppressMapOpenBlock: true })
       mapRef.current = map
       const setMarker = (lat: number, lng: number) => {
-        if (!markerRef.current) { markerRef.current = new ymaps.Placemark([lat, lng], {}, { preset: 'islands#redCircleDotIcon', draggable: true }); markerRef.current.events.add('dragend', () => { const [nextLat, nextLng] = markerRef.current.geometry.getCoordinates(); onChangeRef.current(nextLat, nextLng) }); map.geoObjects.add(markerRef.current) } else markerRef.current.geometry.setCoordinates([lat, lng])
+        const currentMarker = markerRef.current
+        if (!currentMarker) {
+          const marker = new ymaps.Placemark([lat, lng], {}, { preset: 'islands#redCircleDotIcon', draggable: true })
+          markerRef.current = marker
+          marker.events.add('dragend', () => { const [nextLat, nextLng] = marker.geometry.getCoordinates(); onChangeRef.current(nextLat, nextLng) })
+          map.geoObjects.add(marker)
+        } else currentMarker.geometry.setCoordinates([lat, lng])
       }
       if (hasPoint) setMarker(latitude!, longitude!)
       map.events.add('click', (event: AnyObject) => { if (event.get('target') !== map) return; const [lat, lng] = event.get('coords'); setMarker(lat, lng); onChangeRef.current(lat, lng) })
@@ -152,11 +158,13 @@ export function YandexLocationPicker({ apiKey, latitude, longitude, onChange }: 
   useEffect(() => {
     const map = mapRef.current; const ymaps = ymapsRef.current
     if (!map || !ymaps || latitude == null || longitude == null) return
-    if (!markerRef.current) {
-      markerRef.current = new ymaps.Placemark([latitude, longitude], {}, { preset: 'islands#redCircleDotIcon', draggable: true })
-      markerRef.current.events.add('dragend', () => { const [nextLat, nextLng] = markerRef.current.geometry.getCoordinates(); onChangeRef.current(nextLat, nextLng) })
-      map.geoObjects.add(markerRef.current)
-    } else markerRef.current.geometry.setCoordinates([latitude, longitude])
+    const currentMarker = markerRef.current
+    if (!currentMarker) {
+      const marker = new ymaps.Placemark([latitude, longitude], {}, { preset: 'islands#redCircleDotIcon', draggable: true })
+      markerRef.current = marker
+      marker.events.add('dragend', () => { const [nextLat, nextLng] = marker.geometry.getCoordinates(); onChangeRef.current(nextLat, nextLng) })
+      map.geoObjects.add(marker)
+    } else currentMarker.geometry.setCoordinates([latitude, longitude])
     map.setCenter([latitude, longitude], Math.max(map.getZoom(), 10), { duration: 500 })
   }, [latitude, longitude])
   return <div className="location-picker yandex-map" ref={container} aria-label="Yandex xaritasidan post lokatsiyasini tanlash" />
