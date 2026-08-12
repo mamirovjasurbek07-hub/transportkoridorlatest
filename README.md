@@ -24,7 +24,7 @@ Production’da React frontend FastAPI bilan bitta Render domenidan beriladi, ma
 - admin post CRUD, xaritadan lokatsiya, corridor waypoint muharriri;
 - CSV analytics va GeoJSON corridor eksporti;
 - Excel ma'lumotnomasi asosidagi 252 ta mamlakat kodi va xarita markaz koordinatasi;
-- 93 ta bojxona posti, 12 ta tekshirilgan demo corridor va 10 000 ta versiyali mock deklaratsiya;
+- 93 ta bojxona posti, 45 ta tekshirilgan demo corridor va 10 000 ta versiyali mock deklaratsiya;
 - idempotent post/corridor/mock seed.
 
 ## Docker bilan ishga tushirish
@@ -87,7 +87,7 @@ npm run dev
 
 ## Foydalanuvchi yo‘riqnomasi
 
-Public sahifada boshlanish/tugash davlati va sanani tanlab `Qo‘llash` bosing. Chiziq qalinligi deklaratsiyalar sonini, rang va glow faol corridorni bildiradi. Corridor ustiga bosilganda oqim, ulush, masofa va o‘rtacha tranzit vaqti ochiladi. Marker post turi, kodi va kirish/chiqish oqimini ko‘rsatadi.
+Public sahifada boshlanish/tugash davlati va sanani tanlab `Qo‘llash` bosing. Bir davlat juftligi uchun mavjud barcha post kombinatsiyalari alohida rang va yonlama offset bilan birga chiziladi. Xarita ustidagi yo‘lak tanlagichi yoki chiziq bosilganda post nomlari, oqim, ulush, masofa hamda minimal/o‘rtacha/maksimal tranzit vaqti ochiladi. Marker post turi, kodi va kirish/chiqish oqimini ko‘rsatadi.
 
 Admin sahifada:
 
