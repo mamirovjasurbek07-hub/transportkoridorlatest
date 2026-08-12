@@ -23,6 +23,8 @@ Production’da React frontend FastAPI bilan bitta Render domenidan beriladi, ma
 - HttpOnly cookie, CSRF, CORS allowlist, login rate-limit va audit;
 - admin post CRUD, xaritadan lokatsiya, corridor waypoint muharriri;
 - CSV analytics va GeoJSON corridor eksporti;
+- Excel ma'lumotnomasi asosidagi 252 ta mamlakat kodi va xarita markaz koordinatasi;
+- 93 ta bojxona posti, 12 ta tekshirilgan demo corridor va 10 000 ta versiyali mock deklaratsiya;
 - idempotent post/corridor/mock seed.
 
 ## Docker bilan ishga tushirish
