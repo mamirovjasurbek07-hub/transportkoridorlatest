@@ -11,10 +11,10 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.execute("CREATE EXTENSION IF NOT EXISTS postgis")
+    op.execute("CREATE EXTENSION IF NOT EXISTS postgis WITH SCHEMA extensions")
+    op.execute("SET search_path TO public, extensions")
     Base.metadata.create_all(bind=op.get_bind(), checkfirst=True)
 
 
 def downgrade() -> None:
     Base.metadata.drop_all(bind=op.get_bind(), checkfirst=True)
-
