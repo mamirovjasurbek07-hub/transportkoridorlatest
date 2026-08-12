@@ -19,7 +19,7 @@ Production’da React frontend FastAPI bilan bitta Render domenidan beriladi, ma
 - oqim hajmiga mos qalinlikdagi glow/core/animated corridor layerlar;
 - post clustering va post ma’lumotlari popup’i;
 - route yo‘q bo‘lsa to‘g‘ri chiziq chizmasdan `review` holati;
-- Yandex Router/OSRM adapteri, waypoint tartibi bo‘yicha to‘liq avtomobil yo‘li va PostGIS cache;
+- Yandex Maps xaritasi va OSRM adapteri, waypoint tartibi bo‘yicha to‘liq avtomobil yo‘li va PostGIS cache;
 - HttpOnly cookie, CSRF, CORS allowlist, login rate-limit va audit;
 - admin post CRUD, xaritadan lokatsiya, corridor waypoint muharriri;
 - CSV analytics va GeoJSON corridor eksporti;
@@ -93,24 +93,23 @@ Admin sahifada:
 
 1. `Bojxona postlari` bo‘limida yangi post yarating. Xaritani bosing yoki latitude/longitude kiriting — marker va fokus darhol yangilanadi. CHBP uchun yengil va/yoki yuk transporti ruxsatini belgilang. Mavjud post koordinatasi o‘zgarsa bog‘langan faol yo‘laklar qayta hisoblanadi.
 2. `Korridorlar` bo‘limida yuk boshlanadigan/tugaydigan davlatlar hamda entry/exit postlarni tanlang. Davlat tanlanganda boshlanish va tugash markeri qo‘yiladi; uni xaritada sudrab aniq yuk manziliga olib boring.
-3. `Boshlanish`, `Oraliq nuqta` yoki `Tugash` rejimini tanlab xaritani bosing. `Avtomobil yo‘lini ko‘rish` Yandex Router (kalit bo‘lmasa OSRM) orqali barcha markerlarni real yo‘l bo‘yicha bog‘laydi; so‘ng `Bazaga saqlash` tugmasini bosing.
+3. `Boshlanish`, `Oraliq nuqta` yoki `Tugash` rejimini tanlab xaritani bosing. `Avtomobil yo‘lini ko‘rish` OSRM orqali barcha markerlarni real yo‘l bo‘yicha bog‘laydi; so‘ng `Bazaga saqlash` tugmasini bosing.
 4. Oldin saqlangan geometriyalarni yangilash uchun corridorlar sahifasidagi `Barcha yo‘llarni yangilash` tugmasidan foydalaning. So‘rovlar Render va routerga og‘irlik qilmasligi uchun 5 tadan yuboriladi.
 5. Router route topmasa geometriya saqlanmaydi va corridor review holatiga o‘tadi.
 6. `Audit jurnali` barcha asosiy admin harakatlarini ko‘rsatadi.
 
 ## Yandex Maps sozlamasi
 
-Yandex Developer Dashboard'da `JavaScript API` va `Router API` xizmatlari uchun kalit oling. Render → Web Service → Environment bo‘limida quyidagilarni kiriting:
+Yandex Developer Dashboard'da faqat `JavaScript API` kalitini oling. Render → Web Service → Environment bo‘limida quyidagilarni kiriting:
 
 ```text
 MAP_PROVIDER=yandex
 YANDEX_MAPS_API_KEY=JavaScript_API_kaliti
-ROUTING_PROVIDER=yandex
-YANDEX_ROUTER_API_KEY=Router_API_kaliti
+ROUTING_PROVIDER=osrm
 ROUTING_PROFILE=driving
 ```
 
-JavaScript API kalitining domain chekloviga Render bergan domenni protokolsiz kiriting, masalan `transportyo-laklari.onrender.com`. Router kaliti faqat backendda ishlatiladi va frontend javobiga chiqarilmaydi. Kalitlardan biri sozlanmagan bo‘lsa dastur buzilmaydi: xarita OSM'ga, routing esa OSRM'ga qaytadi.
+JavaScript API kalitining domain chekloviga Render bergan domenni protokolsiz kiriting, masalan `transportyo-laklari.onrender.com`. `YANDEX_ROUTER_API_KEY` kerak emas: Yandex faqat xarita uchun, avtomobil yo‘li hisoblash esa OSRM orqali bajariladi. JavaScript kaliti sozlanmagan bo‘lsa xarita OSM'ga qaytadi.
 
 ## Testlar
 

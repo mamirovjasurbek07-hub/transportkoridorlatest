@@ -26,7 +26,7 @@ services:
       - key: FRONTEND_URL
         value: https://transportyo-laklari.onrender.com
       - key: ROUTING_PROVIDER
-        value: yandex
+        value: osrm
       - key: ROUTING_BASE_URL
         value: https://router.project-osrm.org
       - key: ROUTING_PROFILE
@@ -35,10 +35,6 @@ services:
         value: yandex
       - key: YANDEX_MAPS_API_KEY
         sync: false
-      - key: YANDEX_ROUTER_API_KEY
-        sync: false
-      - key: YANDEX_ROUTER_BASE_URL
-        value: https://api.routing.yandex.net/v2/route
       - key: ROUTING_TIMEOUT_SECONDS
         value: "30"
       - key: ENABLE_DEMO_SEED
