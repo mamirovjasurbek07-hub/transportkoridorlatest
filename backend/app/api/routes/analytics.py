@@ -39,6 +39,19 @@ def declaration_filters(date_from: date, date_to: date, origin: str | None, dest
 async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, origin: str | None, destination: str | None, entry: str | None, exit: str | None, corridor_code: str | None) -> dict:
     validate_dates(date_from, date_to)
     filters = declaration_filters(date_from, date_to, origin, destination, entry, exit)
+    selected_corridor = None
+    if corridor_code:
+        selected_corridor = await db.scalar(select(Corridor).where(Corridor.code == corridor_code, Corridor.is_active.is_(True)))
+        if selected_corridor is None:
+            raise HTTPException(status_code=404, detail="Korridor topilmadi")
+        filters.extend([
+            TransitDeclaration.entry_post_code == selected_corridor.entry_post_code,
+            TransitDeclaration.exit_post_code == selected_corridor.exit_post_code,
+        ])
+        if selected_corridor.origin_country_code:
+            filters.append(TransitDeclaration.origin_country_code == selected_corridor.origin_country_code)
+        if selected_corridor.destination_country_code:
+            filters.append(TransitDeclaration.destination_country_code == selected_corridor.destination_country_code)
     transit_seconds = extract("epoch", TransitDeclaration.exit_time - TransitDeclaration.entry_time)
     grouped = (await db.execute(
         select(
@@ -54,17 +67,13 @@ async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, or
     corridor_query = select(Corridor).where(Corridor.is_active.is_(True))
     if corridor_code:
         corridor_query = corridor_query.where(Corridor.code == corridor_code)
+    if origin:
+        corridor_query = corridor_query.where(Corridor.origin_country_code == origin.upper())
+    if destination:
+        corridor_query = corridor_query.where(Corridor.destination_country_code == destination.upper())
     corridors = (await db.scalars(corridor_query)).all()
     corridor_by_pair: dict[tuple[str, str], Corridor] = {}
-    def match_priority(item: Corridor) -> tuple[int, int]:
-        country_penalty = 0
-        if origin and item.origin_country_code != origin.upper():
-            country_penalty += 1
-        if destination and item.destination_country_code != destination.upper():
-            country_penalty += 1
-        return country_penalty, item.priority
-
-    for c in sorted(corridors, key=match_priority):
+    for c in sorted(corridors, key=lambda item: item.priority):
         corridor_by_pair.setdefault((c.entry_post_code, c.exit_post_code), c)
     features = []
     unavailable = []
@@ -78,6 +87,8 @@ async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, or
             "id": str(corridor.id) if corridor else f"{row.entry_post_code}-{row.exit_post_code}",
             "code": corridor.code if corridor else None,
             "name": corridor.name if corridor else "Tasdiqlangan route mavjud emas",
+            "origin_country_code": corridor.origin_country_code if corridor else origin,
+            "destination_country_code": corridor.destination_country_code if corridor else destination,
             "entry_post_code": row.entry_post_code,
             "exit_post_code": row.exit_post_code,
             "declaration_count": row.count,
@@ -94,8 +105,11 @@ async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, or
         else:
             unavailable.append(properties)
     post_rows = (await db.scalars(select(CustomsPost).where(CustomsPost.is_active.is_(True), CustomsPost.latitude.is_not(None)))).all()
-    entry_counts = {row.entry_post_code: row.count for row in grouped}
-    exit_counts = {row.exit_post_code: row.count for row in grouped}
+    entry_counts: dict[str, int] = {}
+    exit_counts: dict[str, int] = {}
+    for row in grouped:
+        entry_counts[row.entry_post_code] = entry_counts.get(row.entry_post_code, 0) + row.count
+        exit_counts[row.exit_post_code] = exit_counts.get(row.exit_post_code, 0) + row.count
     posts_geojson = {"type": "FeatureCollection", "features": [{
         "type": "Feature", "geometry": {"type": "Point", "coordinates": [p.longitude, p.latitude]},
         "properties": {"id": str(p.id), "post_code": p.post_code, "post_name": p.post_name, "post_type": p.post_type,
@@ -106,6 +120,15 @@ async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, or
     trend = (await db.execute(select(TransitDeclaration.declaration_date, func.count().label("count")).where(*filters).group_by(TransitDeclaration.declaration_date).order_by(TransitDeclaration.declaration_date))).all()
     period_days = (date_to - date_from).days + 1
     previous_filters = declaration_filters(date_from - timedelta(days=period_days), date_from - timedelta(days=1), origin, destination, entry, exit)
+    if selected_corridor is not None:
+        previous_filters.extend([
+            TransitDeclaration.entry_post_code == selected_corridor.entry_post_code,
+            TransitDeclaration.exit_post_code == selected_corridor.exit_post_code,
+        ])
+        if selected_corridor.origin_country_code:
+            previous_filters.append(TransitDeclaration.origin_country_code == selected_corridor.origin_country_code)
+        if selected_corridor.destination_country_code:
+            previous_filters.append(TransitDeclaration.destination_country_code == selected_corridor.destination_country_code)
     previous_total = await db.scalar(select(func.count()).select_from(TransitDeclaration).where(*previous_filters)) or 0
     change = round((total - previous_total) * 100 / previous_total, 1) if previous_total else (100.0 if total else 0.0)
     top_pairs = sorted(grouped, key=lambda r: r.count, reverse=True)[:5]

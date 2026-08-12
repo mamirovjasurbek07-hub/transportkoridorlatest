@@ -7,20 +7,9 @@ from app.dependencies import admin_user, csrf_protect
 from app.models import AppSetting, AuditLog, Corridor, CustomsPost, TransitDeclaration, User
 from app.seed import seed_demo_declarations
 from app.audit import add_audit
+from app.country_data import COUNTRIES
 
 router = APIRouter(tags=["system"])
-
-COUNTRIES = [
-    ("AF", "AFG", "Afg'oniston", "🇦🇫"), ("AZ", "AZE", "Ozarbayjon", "🇦🇿"),
-    ("BY", "BLR", "Belarus", "🇧🇾"), ("CN", "CHN", "Xitoy", "🇨🇳"),
-    ("GE", "GEO", "Gruziya", "🇬🇪"), ("IR", "IRN", "Eron", "🇮🇷"),
-    ("KZ", "KAZ", "Qozog'iston", "🇰🇿"), ("KG", "KGZ", "Qirg'iziston", "🇰🇬"),
-    ("PK", "PAK", "Pokiston", "🇵🇰"), ("RU", "RUS", "Rossiya", "🇷🇺"),
-    ("TJ", "TJK", "Tojikiston", "🇹🇯"), ("TM", "TKM", "Turkmaniston", "🇹🇲"),
-    ("TR", "TUR", "Turkiya", "🇹🇷"), ("UA", "UKR", "Ukraina", "🇺🇦"),
-    ("UZ", "UZB", "O'zbekiston", "🇺🇿"),
-]
-
 
 @router.get("/health", tags=["health"])
 async def health(db: AsyncSession = Depends(get_db)) -> dict:
@@ -29,8 +18,18 @@ async def health(db: AsyncSession = Depends(get_db)) -> dict:
 
 
 @router.get("/countries", tags=["countries"])
-async def countries() -> list[dict]:
-    return [{"alpha2": a2, "alpha3": a3, "name": name, "flag": flag} for a2, a3, name, flag in COUNTRIES]
+async def countries(db: AsyncSession = Depends(get_db)) -> list[dict]:
+    route_pairs = (await db.execute(select(Corridor.origin_country_code, Corridor.destination_country_code).where(Corridor.is_active.is_(True)))).all()
+    origins = {row.origin_country_code for row in route_pairs if row.origin_country_code}
+    destinations = {row.destination_country_code for row in route_pairs if row.destination_country_code}
+    return [
+        {
+            **country,
+            "has_origin_route": country["alpha2"] in origins,
+            "has_destination_route": country["alpha2"] in destinations,
+        }
+        for country in COUNTRIES
+    ]
 
 
 @router.get("/declarations/summary", tags=["declarations"])
