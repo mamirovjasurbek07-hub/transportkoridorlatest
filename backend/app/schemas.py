@@ -42,6 +42,8 @@ class PostBase(BaseModel):
     latitude: float | None = Field(default=None, ge=-90, le=90)
     longitude: float | None = Field(default=None, ge=-180, le=180)
     location_verified: bool = False
+    allow_passenger_vehicles: bool = True
+    allow_cargo_vehicles: bool = True
     is_active: bool = True
 
     @model_validator(mode="after")
@@ -50,6 +52,8 @@ class PostBase(BaseModel):
             raise ValueError("Latitude va longitude birga kiritilishi kerak")
         if self.post_type == "CHBP" and not self.neighbor_country_code:
             raise ValueError("CHBP uchun chegaradosh davlat majburiy")
+        if self.post_type == "CHBP" and not (self.allow_passenger_vehicles or self.allow_cargo_vehicles):
+            raise ValueError("CHBP uchun kamida bitta transport turiga ruxsat berilishi kerak")
         if self.neighbor_country_code:
             self.neighbor_country_code = self.neighbor_country_code.upper()
         return self
@@ -67,6 +71,8 @@ class PostUpdate(BaseModel):
     latitude: float | None = Field(default=None, ge=-90, le=90)
     longitude: float | None = Field(default=None, ge=-180, le=180)
     location_verified: bool | None = None
+    allow_passenger_vehicles: bool | None = None
+    allow_cargo_vehicles: bool | None = None
     is_active: bool | None = None
 
 

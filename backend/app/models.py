@@ -50,6 +50,8 @@ class CustomsPost(Base, TimestampMixin):
     longitude: Mapped[float | None] = mapped_column(Float)
     location: Mapped[Any | None] = mapped_column(Geography("POINT", srid=4326))
     location_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    allow_passenger_vehicles: Mapped[bool] = mapped_column(Boolean, default=True)
+    allow_cargo_vehicles: Mapped[bool] = mapped_column(Boolean, default=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
