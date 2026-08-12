@@ -1,19 +1,21 @@
 import { useEffect, useRef } from 'react'
 import maplibregl, { GeoJSONSource, Map, Marker } from 'maplibre-gl'
-import type { Waypoint } from '../../types'
+import type { CustomsPost, Waypoint } from '../../types'
 import { getMapStyle } from './mapStyle'
 import { useMapProvider } from './mapProvider'
 import { YandexRouteBuilderMap } from './YandexMaps'
 
-type Props = { waypoints: Waypoint[]; geometry?: GeoJSON.LineString; onAdd: (lat: number, lng: number) => void; onMove: (index: number, lat: number, lng: number) => void }
+type Props = { waypoints: Waypoint[]; geometry?: GeoJSON.LineString; posts?: CustomsPost[]; onAdd: (lat: number, lng: number) => void; onMove: (index: number, lat: number, lng: number) => void; onPostSelect?: (post: CustomsPost) => void }
 
-function MapLibreRouteBuilderMap({ waypoints, geometry, onAdd, onMove }: Props) {
+function MapLibreRouteBuilderMap({ waypoints, geometry, posts = [], onAdd, onMove, onPostSelect }: Props) {
   const container = useRef<HTMLDivElement>(null)
   const mapRef = useRef<Map | null>(null)
   const markers = useRef<Marker[]>([])
   const onAddRef = useRef(onAdd)
   const onMoveRef = useRef(onMove)
+  const onPostSelectRef = useRef(onPostSelect)
   onAddRef.current = onAdd; onMoveRef.current = onMove
+  onPostSelectRef.current = onPostSelect
   useEffect(() => {
     if (!container.current || mapRef.current) return
     const map = new maplibregl.Map({ container: container.current, style: getMapStyle(), center: [64.6, 41.2], zoom: 5 })
@@ -28,13 +30,17 @@ function MapLibreRouteBuilderMap({ waypoints, geometry, onAdd, onMove }: Props) 
     const map = mapRef.current
     if (!map) return
     markers.current.forEach((m) => m.remove()); markers.current = []
+    posts.filter((post) => post.latitude != null && post.longitude != null).forEach((post) => {
+      const element = document.createElement('button'); element.type = 'button'; element.className = `post-map-marker ${post.post_type.toLowerCase()}`; element.title = `${post.post_code} · ${post.post_name}`
+      element.addEventListener('click', (event) => { event.stopPropagation(); onPostSelectRef.current?.(post) })
+      markers.current.push(new maplibregl.Marker({ element }).setLngLat([post.longitude!, post.latitude!]).addTo(map))
+    })
     waypoints.forEach((point, index) => {
       const element = document.createElement('div'); element.className = `waypoint-marker ${point.waypoint_type.toLowerCase()}`; element.textContent = String(index + 1)
-      const fixed = point.waypoint_type === 'ENTRY_POST' || point.waypoint_type === 'EXIT_POST'
-      const marker = new maplibregl.Marker({ element, draggable: !fixed }).setLngLat([point.longitude, point.latitude]).addTo(map)
+      const marker = new maplibregl.Marker({ element, draggable: !point.post_code }).setLngLat([point.longitude, point.latitude]).addTo(map)
       marker.on('dragend', () => { const p = marker.getLngLat(); onMoveRef.current(index, p.lat, p.lng) }); markers.current.push(marker)
     })
-  }, [waypoints])
+  }, [posts, waypoints])
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
