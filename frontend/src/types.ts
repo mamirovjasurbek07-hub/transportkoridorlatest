@@ -68,7 +68,7 @@ export interface AnalyticsData {
   corridors: FeatureCollection
   posts: FeatureCollection
   unavailable_routes: Array<Record<string, unknown>>
-  top_pairs: Array<{ entry: string; exit: string; count: number }>
+  top_pairs: Array<{ origin: string; destination: string; entry: string; exit: string; count: number }>
   country_share: Array<{ country: string; count: number; share: number }>
   trend: Array<{ date: string; count: number }>
 }
