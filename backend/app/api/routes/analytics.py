@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from geoalchemy2.functions import ST_AsGeoJSON
-from sqlalchemy import extract, func, or_, select
+from sqlalchemy import extract, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import noload
 
@@ -78,9 +78,10 @@ async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, or
     total = sum(row.count for row in grouped)
     available_corridor_count = await db.scalar(select(func.count()).select_from(Corridor).where(
         Corridor.is_active.is_(True), Corridor.route_needs_review.is_(False), Corridor.geometry.is_not(None),
-        or_(Corridor.geometry_source.endswith("-router"), Corridor.geometry_source.startswith("post-update-")),
     )) or 0
-    map_rows = [] if map_mode == "posts" and not corridor_code else sorted(grouped, key=lambda row: row.count, reverse=True)[:5] if map_mode == "top5" and not corridor_code else grouped
+    row_by_pair = {(row.origin_country_code, row.destination_country_code, row.entry_post_code, row.exit_post_code): row for row in grouped}
+    top_rows = sorted(grouped, key=lambda row: row.count, reverse=True)[:5]
+    top_keys = {(row.origin_country_code, row.destination_country_code, row.entry_post_code, row.exit_post_code) for row in top_rows}
     corridor_query = select(Corridor).options(noload(Corridor.waypoints)).where(Corridor.is_active.is_(True))
     if corridor_code:
         corridor_query = corridor_query.where(Corridor.code == corridor_code)
@@ -88,16 +89,13 @@ async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, or
         corridor_query = corridor_query.where(Corridor.origin_country_code == origin.upper())
     if destination:
         corridor_query = corridor_query.where(Corridor.destination_country_code == destination.upper())
-    corridors = [] if not map_rows else (await db.scalars(corridor_query)).all()
-    corridors_by_pair: dict[tuple[str | None, str | None, str, str], list[Corridor]] = {}
-    for c in sorted(corridors, key=lambda item: item.priority):
-        corridors_by_pair.setdefault(
-            (c.origin_country_code, c.destination_country_code, c.entry_post_code, c.exit_post_code), []
-        ).append(c)
+    corridors = [] if map_mode == "posts" and not corridor_code else (await db.scalars(corridor_query)).all()
     post_rows = (await db.scalars(select(CustomsPost).where(CustomsPost.is_active.is_(True), CustomsPost.latitude.is_not(None)))).all()
     posts_by_code = {post.post_code: post for post in post_rows}
     post_names = {code: post.post_name for code, post in posts_by_code.items()}
-    valid_geometry_corridors = [corridor for corridor in corridors if corridor.geometry is not None and not corridor.route_needs_review and (corridor.geometry_source.endswith("-router") or corridor.geometry_source.startswith("post-update-"))]
+    valid_geometry_corridors = [corridor for corridor in corridors if corridor.geometry is not None and not corridor.route_needs_review]
+    if map_mode == "top5" and not corridor_code:
+        valid_geometry_corridors = [corridor for corridor in valid_geometry_corridors if (corridor.origin_country_code, corridor.destination_country_code, corridor.entry_post_code, corridor.exit_post_code) in top_keys]
     geometry_by_id = {
         corridor_id: json.loads(raw)
         for corridor_id, raw in (await db.execute(
@@ -107,48 +105,36 @@ async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, or
     } if valid_geometry_corridors else {}
     features = []
     unavailable = []
-    for row in map_rows:
-        matched_corridors = corridors_by_pair.get((
-            row.origin_country_code,
-            row.destination_country_code,
-            row.entry_post_code,
-            row.exit_post_code,
-        ), [])
-        candidates: list[Corridor | None] = matched_corridors or [None]
-        for corridor in candidates:
-            geometry = None
-            if corridor:
-                geometry = geometry_by_id.get(corridor.id)
-            properties = {
-                "id": str(corridor.id) if corridor else f"{row.entry_post_code}-{row.exit_post_code}",
-                "code": corridor.code if corridor else None,
-                "name": corridor.name if corridor else "Tasdiqlangan route mavjud emas",
-                "origin_country_code": corridor.origin_country_code if corridor else row.origin_country_code,
-                "destination_country_code": corridor.destination_country_code if corridor else row.destination_country_code,
-                "entry_post_code": row.entry_post_code,
-                "exit_post_code": row.exit_post_code,
-                "entry_post_name": post_names.get(row.entry_post_code, row.entry_post_code),
-                "exit_post_name": post_names.get(row.exit_post_code, row.exit_post_code),
-                "entry_allow_passenger": posts_by_code.get(row.entry_post_code).allow_passenger_vehicles if row.entry_post_code in posts_by_code else None,
-                "entry_allow_cargo": posts_by_code.get(row.entry_post_code).allow_cargo_vehicles if row.entry_post_code in posts_by_code else None,
-                "exit_allow_passenger": posts_by_code.get(row.exit_post_code).allow_passenger_vehicles if row.exit_post_code in posts_by_code else None,
-                "exit_allow_cargo": posts_by_code.get(row.exit_post_code).allow_cargo_vehicles if row.exit_post_code in posts_by_code else None,
-                "declaration_count": row.count,
-                "percentage_share": round(row.count * 100 / total, 2) if total else 0,
-                "avg_transit_minutes": round((row.avg_seconds or 0) / 60),
-                "min_transit_minutes": round((row.min_seconds or 0) / 60),
-                "max_transit_minutes": round((row.max_seconds or 0) / 60),
-                "distance_km": round((corridor.distance_meters or 0) / 1000, 1) if corridor else None,
-                "route_available": geometry is not None,
-                "color": corridor.color if corridor and corridor.color else "#22d3ee",
-            }
-            if geometry:
-                features.append({"type": "Feature", "geometry": geometry, "properties": properties})
-            else:
-                unavailable.append(properties)
+    display_corridors = sorted(valid_geometry_corridors, key=lambda item: (item.priority, item.name))
+    for corridor in display_corridors:
+        key = (corridor.origin_country_code, corridor.destination_country_code, corridor.entry_post_code, corridor.exit_post_code)
+        row = row_by_pair.get(key)
+        count = row.count if row else 0
+        properties = {
+            "id": str(corridor.id), "code": corridor.code, "name": corridor.name,
+            "origin_country_code": corridor.origin_country_code, "destination_country_code": corridor.destination_country_code,
+            "entry_post_code": corridor.entry_post_code, "exit_post_code": corridor.exit_post_code,
+            "entry_post_name": post_names.get(corridor.entry_post_code, corridor.entry_post_code),
+            "exit_post_name": post_names.get(corridor.exit_post_code, corridor.exit_post_code),
+            "entry_allow_passenger": posts_by_code.get(corridor.entry_post_code).allow_passenger_vehicles if corridor.entry_post_code in posts_by_code else None,
+            "entry_allow_cargo": posts_by_code.get(corridor.entry_post_code).allow_cargo_vehicles if corridor.entry_post_code in posts_by_code else None,
+            "exit_allow_passenger": posts_by_code.get(corridor.exit_post_code).allow_passenger_vehicles if corridor.exit_post_code in posts_by_code else None,
+            "exit_allow_cargo": posts_by_code.get(corridor.exit_post_code).allow_cargo_vehicles if corridor.exit_post_code in posts_by_code else None,
+            "declaration_count": count, "percentage_share": round(count * 100 / total, 2) if total else 0,
+            "avg_transit_minutes": round((row.avg_seconds or 0) / 60) if row else 0,
+            "min_transit_minutes": round((row.min_seconds or 0) / 60) if row else 0,
+            "max_transit_minutes": round((row.max_seconds or 0) / 60) if row else 0,
+            "distance_km": round((corridor.distance_meters or 0) / 1000, 1), "route_available": True,
+            "color": corridor.color or "#22d3ee",
+        }
+        features.append({"type": "Feature", "geometry": geometry_by_id[corridor.id], "properties": properties})
+    invalid_corridors = [corridor for corridor in corridors if corridor not in valid_geometry_corridors]
     if map_mode == "top5" and not corridor_code:
-        features.sort(key=lambda feature: feature["properties"]["declaration_count"], reverse=True)
-        del features[5:]
+        invalid_corridors = [corridor for corridor in invalid_corridors if (corridor.origin_country_code, corridor.destination_country_code, corridor.entry_post_code, corridor.exit_post_code) in top_keys]
+    unavailable.extend({"id": str(corridor.id), "code": corridor.code, "name": corridor.name,
+        "origin_country_code": corridor.origin_country_code, "destination_country_code": corridor.destination_country_code,
+        "entry_post_code": corridor.entry_post_code, "exit_post_code": corridor.exit_post_code, "route_available": False}
+        for corridor in invalid_corridors)
     entry_counts: dict[str, int] = {}
     exit_counts: dict[str, int] = {}
     for row in grouped:
@@ -176,7 +162,7 @@ async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, or
             previous_filters.append(TransitDeclaration.destination_country_code == selected_corridor.destination_country_code)
     previous_total = await db.scalar(select(func.count()).select_from(TransitDeclaration).where(*previous_filters)) or 0
     change = round((total - previous_total) * 100 / previous_total, 1) if previous_total else (100.0 if total else 0.0)
-    top_pairs = sorted(grouped, key=lambda r: r.count, reverse=True)[:5]
+    top_pairs = top_rows
     top_corridor = max(features, key=lambda f: f["properties"]["declaration_count"], default=None)
     return {
         "meta": {"date_from": date_from, "date_to": date_to, "refreshed_at": datetime.utcnow().isoformat() + "Z", "unavailable_count": len(unavailable)},

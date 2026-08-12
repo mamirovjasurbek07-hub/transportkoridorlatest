@@ -1,4 +1,7 @@
-from fastapi import APIRouter, Depends, Query, Request
+import time
+
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,6 +14,7 @@ from app.country_data import COUNTRIES
 from app.config import settings
 
 router = APIRouter(tags=["system"])
+_border_cache: tuple[float, dict] | None = None
 
 @router.get("/health", tags=["health"])
 async def health(db: AsyncSession = Depends(get_db)) -> dict:
@@ -30,6 +34,32 @@ async def map_config() -> dict:
         "routing_provider": routing_provider,
         "routing_profile": settings.routing_profile,
     }
+
+
+@router.get("/map/uzbekistan-border", tags=["map"])
+async def uzbekistan_border() -> dict:
+    """Proxy and cache the border so browsers never depend on GitHub CORS headers."""
+    global _border_cache
+    now = time.monotonic()
+    if _border_cache and now - _border_cache[0] < 86_400:
+        return _border_cache[1]
+    metadata_url = "https://www.geoboundaries.org/api/current/gbOpen/UZB/ADM0/"
+    try:
+        async with httpx.AsyncClient(timeout=20, follow_redirects=True, headers={"User-Agent": "transit-corridors/1.0"}) as client:
+            metadata_response = await client.get(metadata_url)
+            metadata_response.raise_for_status()
+            geometry_url = metadata_response.json()["simplifiedGeometryGeoJSON"]
+            if geometry_url.startswith("https://github.com/"):
+                geometry_url = geometry_url.replace("https://github.com/", "https://raw.githubusercontent.com/", 1).replace("/raw/", "/", 1)
+            geometry_response = await client.get(geometry_url)
+            geometry_response.raise_for_status()
+            result = geometry_response.json()
+    except (httpx.HTTPError, KeyError, ValueError) as exc:
+        if _border_cache:
+            return _border_cache[1]
+        raise HTTPException(status_code=503, detail="O'zbekiston chegarasi vaqtincha yuklanmadi") from exc
+    _border_cache = (now, result)
+    return result
 
 
 @router.get("/countries", tags=["countries"])
