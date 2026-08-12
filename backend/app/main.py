@@ -1,3 +1,4 @@
+import asyncio
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -16,7 +17,7 @@ from slowapi.util import get_remote_address
 from app.api.router import api_router
 from app.config import settings
 from app.database import SessionLocal
-from app.seed import seed_all
+from app.seed import rebuild_pending_seed_routes, seed_all
 
 structlog.configure(processors=[structlog.processors.TimeStamper(fmt="iso"), structlog.processors.JSONRenderer()])
 logger = structlog.get_logger()
@@ -26,7 +27,13 @@ logger = structlog.get_logger()
 async def lifespan(_: FastAPI):
     async with SessionLocal() as db:
         await seed_all(db)
-    yield
+    route_rebuild_task = asyncio.create_task(rebuild_pending_seed_routes(SessionLocal))
+    try:
+        yield
+    finally:
+        if not route_rebuild_task.done():
+            route_rebuild_task.cancel()
+        await asyncio.gather(route_rebuild_task, return_exceptions=True)
 
 
 app = FastAPI(

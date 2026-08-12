@@ -85,7 +85,7 @@ class RoutingService:
         last_error = "Routing xizmati javob bermadi"
         for attempt in range(2):
             try:
-                async with httpx.AsyncClient(timeout=settings.routing_timeout_seconds) as client:
+                async with httpx.AsyncClient(timeout=settings.routing_timeout_seconds, headers={"User-Agent": f"transport-corridors/1.0 ({settings.frontend_url})"}) as client:
                     response = await client.get(url, params=params)
                     response.raise_for_status()
                     payload = response.json()
