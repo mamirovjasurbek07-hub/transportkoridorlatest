@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     routing_provider: str = "osrm"
     routing_base_url: str = "https://router.project-osrm.org"
     routing_profile: Literal["driving", "truck"] = "driving"
+    yandex_router_enabled: bool = False
     yandex_router_api_key: str = ""
     yandex_router_base_url: str = "https://api.routing.yandex.net/v2/route"
     routing_timeout_seconds: int = 30

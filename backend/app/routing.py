@@ -38,7 +38,7 @@ class RoutingService:
 
     @staticmethod
     def _provider() -> str:
-        if settings.routing_provider.lower() == "yandex" and settings.yandex_router_api_key.strip():
+        if settings.yandex_router_enabled and settings.routing_provider.lower() == "yandex" and settings.yandex_router_api_key.strip():
             return "yandex"
         return "osrm"
 
