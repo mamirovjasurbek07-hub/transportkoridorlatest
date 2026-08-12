@@ -15,7 +15,8 @@ router = APIRouter(tags=["system"])
 @router.get("/health", tags=["health"])
 async def health(db: AsyncSession = Depends(get_db)) -> dict:
     await db.execute(text("SELECT 1"))
-    return {"status": "ok", "database": "connected"}
+    pending_routes = await db.scalar(select(func.count()).select_from(Corridor).where(Corridor.geometry_source == "seed-routing-pending-v5")) or 0
+    return {"status": "ok", "database": "connected", "pending_route_rebuilds": pending_routes}
 
 
 @router.get("/map/config", tags=["map"])

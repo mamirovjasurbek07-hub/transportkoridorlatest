@@ -99,7 +99,10 @@ async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, or
         candidates: list[Corridor | None] = matched_corridors or [None]
         for corridor in candidates:
             geometry = None
-            if corridor and corridor.geometry is not None:
+            router_geometry = bool(corridor and (
+                corridor.geometry_source.endswith("-router") or corridor.geometry_source.startswith("post-update-")
+            ))
+            if corridor and corridor.geometry is not None and not corridor.route_needs_review and router_geometry:
                 raw = await db.scalar(select(ST_AsGeoJSON(Corridor.geometry)).where(Corridor.id == corridor.id))
                 geometry = json.loads(raw) if raw else None
             properties = {
