@@ -2,8 +2,12 @@ import { useEffect, useRef } from 'react'
 import maplibregl, { GeoJSONSource, Map, Marker } from 'maplibre-gl'
 import type { Waypoint } from '../../types'
 import { getMapStyle } from './mapStyle'
+import { useMapProvider } from './mapProvider'
+import { YandexRouteBuilderMap } from './YandexMaps'
 
-export default function RouteBuilderMap({ waypoints, geometry, onAdd, onMove }: { waypoints: Waypoint[]; geometry?: GeoJSON.LineString; onAdd: (lat: number, lng: number) => void; onMove: (index: number, lat: number, lng: number) => void }) {
+type Props = { waypoints: Waypoint[]; geometry?: GeoJSON.LineString; onAdd: (lat: number, lng: number) => void; onMove: (index: number, lat: number, lng: number) => void }
+
+function MapLibreRouteBuilderMap({ waypoints, geometry, onAdd, onMove }: Props) {
   const container = useRef<HTMLDivElement>(null)
   const mapRef = useRef<Map | null>(null)
   const markers = useRef<Marker[]>([])
@@ -40,3 +44,8 @@ export default function RouteBuilderMap({ waypoints, geometry, onAdd, onMove }: 
   return <div ref={container} className="route-builder-map" aria-label="Korridor waypointlarini tahrirlash xaritasi" />
 }
 
+export default function RouteBuilderMap(props: Props) {
+  const config = useMapProvider()
+  if (config?.provider === 'yandex' && config.yandex_maps_api_key) return <YandexRouteBuilderMap apiKey={config.yandex_maps_api_key} {...props}/>
+  return <MapLibreRouteBuilderMap {...props}/>
+}

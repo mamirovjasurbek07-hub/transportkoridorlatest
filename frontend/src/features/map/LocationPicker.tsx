@@ -1,8 +1,12 @@
 import { useEffect, useRef } from 'react'
 import maplibregl, { Map, Marker } from 'maplibre-gl'
 import { getMapStyle } from './mapStyle'
+import { useMapProvider } from './mapProvider'
+import { YandexLocationPicker } from './YandexMaps'
 
-export default function LocationPicker({ latitude, longitude, onChange }: { latitude?: number; longitude?: number; onChange: (lat: number, lng: number) => void }) {
+type Props = { latitude?: number; longitude?: number; onChange: (lat: number, lng: number) => void }
+
+function MapLibreLocationPicker({ latitude, longitude, onChange }: Props) {
   const container = useRef<HTMLDivElement>(null)
   const mapRef = useRef<Map | null>(null)
   const markerRef = useRef<Marker | null>(null)
@@ -33,4 +37,10 @@ export default function LocationPicker({ latitude, longitude, onChange }: { lati
     map.easeTo({ center: [longitude, latitude], zoom: Math.max(map.getZoom(), 10), duration: 500 })
   }, [latitude, longitude])
   return <div className="location-picker" ref={container} aria-label="Post lokatsiyasini xaritadan tanlash" />
+}
+
+export default function LocationPicker(props: Props) {
+  const config = useMapProvider()
+  if (config?.provider === 'yandex' && config.yandex_maps_api_key) return <YandexLocationPicker apiKey={config.yandex_maps_api_key} {...props}/>
+  return <MapLibreLocationPicker {...props}/>
 }

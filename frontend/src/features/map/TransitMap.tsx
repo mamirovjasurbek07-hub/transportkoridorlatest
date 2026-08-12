@@ -4,6 +4,8 @@ import maplibregl, { GeoJSONSource, Map, MapLayerMouseEvent, Popup } from 'mapli
 import { LocateFixed, Maximize2, Minimize2 } from 'lucide-react'
 import type { FeatureCollection } from '../../types'
 import { getMapStyle } from './mapStyle'
+import { useMapProvider } from './mapProvider'
+import { YandexTransitMap } from './YandexMaps'
 
 interface Props {
   posts?: FeatureCollection
@@ -15,7 +17,7 @@ interface Props {
 
 const empty: FeatureCollection = { type: 'FeatureCollection', features: [] }
 
-export default function TransitMap({ posts = empty, corridors = empty, selectedId, onCorridorSelect, loading }: Props) {
+function MapLibreTransitMap({ posts = empty, corridors = empty, selectedId, onCorridorSelect, loading }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<Map | null>(null)
   const popupRef = useRef<Popup | null>(null)
@@ -100,4 +102,10 @@ export default function TransitMap({ posts = empty, corridors = empty, selectedI
       <div className="map-legend"><strong>OQIM ZICHLIGI</strong><span><i className="line low" /> Past</span><span><i className="line mid" /> O'rta</span><span><i className="line high" /> Yuqori</span></div>
     </div>
   )
+}
+
+export default function TransitMap(props: Props) {
+  const config = useMapProvider()
+  if (config?.provider === 'yandex' && config.yandex_maps_api_key) return <YandexTransitMap apiKey={config.yandex_maps_api_key} {...props}/>
+  return <MapLibreTransitMap {...props}/>
 }
