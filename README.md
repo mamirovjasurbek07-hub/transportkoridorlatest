@@ -24,7 +24,7 @@ Production’da React frontend FastAPI bilan bitta Render domenidan beriladi, ma
 - admin post CRUD, xaritadan lokatsiya, corridor waypoint muharriri;
 - CSV analytics va GeoJSON corridor eksporti;
 - Excel ma'lumotnomasi asosidagi 252 ta mamlakat kodi va xarita markaz koordinatasi;
-- 93 ta bojxona posti, 45 ta tekshirilgan demo corridor va 10 000 ta versiyali mock deklaratsiya;
+- 93 ta bojxona posti, 52 ta tekshirilgan demo corridor va 10 000 ta versiyali mock deklaratsiya;
 - idempotent post/corridor/mock seed.
 
 ## Docker bilan ishga tushirish
@@ -87,11 +87,11 @@ npm run dev
 
 ## Foydalanuvchi yo‘riqnomasi
 
-Public sahifada boshlanish/tugash davlati va sanani tanlab `Qo‘llash` bosing. Bir davlat juftligi uchun mavjud barcha post kombinatsiyalari alohida rang va yonlama offset bilan birga chiziladi. Xarita ustidagi yo‘lak tanlagichi yoki chiziq bosilganda post nomlari, oqim, ulush, masofa hamda minimal/o‘rtacha/maksimal tranzit vaqti ochiladi. Marker post turi, kodi va kirish/chiqish oqimini ko‘rsatadi.
+Public sahifada boshlanish/tugash davlati va sanani tanlab `Qo‘llash` bosing. Bir davlat juftligi uchun mavjud barcha post kombinatsiyalari alohida rang va yonlama offset bilan birga chiziladi. Xalqaro shablonlar xorijiy logistika gatewayidan O‘zbekiston postlari va tranzit yo‘li orqali keyingi gatewaygacha saqlangan OSRM geometriyasidan foydalanadi. Yo‘lak bosilganda post nomlari, transport ruxsati, oqim, ulush, masofa hamda minimal/o‘rtacha/maksimal tranzit vaqti ochiladi.
 
 Admin sahifada:
 
-1. `Bojxona postlari` bo‘limida yangi post yarating va xaritani bosib lokatsiya belgilang.
+1. `Bojxona postlari` bo‘limida yangi post yarating. Xaritani bosing yoki latitude/longitude kiriting — marker va fokus darhol yangilanadi. CHBP uchun yengil va/yoki yuk transporti ruxsatini belgilang. Mavjud post koordinatasi o‘zgarsa bog‘langan faol yo‘laklar qayta hisoblanadi.
 2. `Korridorlar` bo‘limida davlatlar, entry/exit postlar va VIA nuqtalarni tartiblang.
 3. `Route preview` OSRM orqali avtomobil yo‘lini hisoblaydi; muvaffaqiyatli preview’dan keyin saqlang.
 4. Router route topmasa geometriya saqlanmaydi va corridor review holatiga o‘tadi.
