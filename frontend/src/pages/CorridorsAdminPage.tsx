@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Check, ChevronDown, ChevronUp, Eye, Map, Pencil, Plus, Route, RotateCw, Trash2, X } from 'lucide-react'
+import { Check, ChevronDown, ChevronUp, Eye, Flag, Map, MapPin, MousePointer2, Pencil, Plus, RefreshCw, Route, RotateCw, Trash2, X } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 import { api, ApiError } from '../api'
 import Toast, { ToastState } from '../Toast'
@@ -8,43 +8,114 @@ import RouteBuilderMap from '../features/map/RouteBuilderMap'
 import AdminLayout from '../AdminLayout'
 import type { Corridor, Country, CustomsPost, Waypoint } from '../types'
 
-interface FormState { code: string; name: string; origin_country_code: string; destination_country_code: string; entry_post_code: string; exit_post_code: string; status: string; color: string; priority: number; is_active: boolean; waypoints: Waypoint[] }
-interface PreviewResult { status: string; geometry?: GeoJSON.LineString; distance_meters?: number; duration_seconds?: number; cached: boolean; message?: string }
-const empty: FormState = { code: '', name: '', origin_country_code: 'KZ', destination_country_code: 'TM', entry_post_code: '', exit_post_code: '', status: 'DRAFT', color: '#22d3ee', priority: 100, is_active: true, waypoints: [] }
+type MarkMode = 'ORIGIN_GATEWAY' | 'VIA' | 'DESTINATION_GATEWAY'
+interface FormState { code: string; name: string; origin_country_code: string; destination_country_code: string; entry_post_code: string; exit_post_code: string; status: string; color: string; routing_profile: 'driving' | 'truck'; priority: number; is_active: boolean; waypoints: Waypoint[] }
+interface PreviewResult { status: string; geometry?: GeoJSON.LineString; distance_meters?: number; duration_seconds?: number; provider: string; cached: boolean; message?: string }
+interface RebuildResult { requested: number; processed: number; updated: string[]; failed: Array<{ id: string; code: string; message: string }>; provider: string }
+
+const blank = (): FormState => ({ code: '', name: '', origin_country_code: '', destination_country_code: '', entry_post_code: '', exit_post_code: '', status: 'DRAFT', color: '#22d3ee', routing_profile: 'driving', priority: 100, is_active: true, waypoints: [] })
+const waypointOrder: Record<Waypoint['waypoint_type'], number> = { ORIGIN_GATEWAY: 0, ENTRY_POST: 1, VIA: 2, EXIT_POST: 3, DESTINATION_GATEWAY: 4 }
+const normalize = (points: Waypoint[]) => [...points].sort((a, b) => waypointOrder[a.waypoint_type] - waypointOrder[b.waypoint_type] || a.sequence_no - b.sequence_no).map((point, sequence_no) => ({ ...point, sequence_no }))
 
 export default function CorridorsAdminPage() {
   const [params] = useSearchParams()
   const client = useQueryClient()
   const [open, setOpen] = useState(params.get('new') === '1')
   const [editing, setEditing] = useState<Corridor | null>(null)
-  const [form, setForm] = useState<FormState>(empty)
+  const [form, setForm] = useState<FormState>(blank)
+  const [markMode, setMarkMode] = useState<MarkMode>('VIA')
   const [preview, setPreview] = useState<GeoJSON.LineString | undefined>()
-  const [previewMeta, setPreviewMeta] = useState<{ distance_meters?: number; duration_seconds?: number; cached?: boolean } | null>(null)
+  const [previewMeta, setPreviewMeta] = useState<PreviewResult | null>(null)
+  const [rebuildProgress, setRebuildProgress] = useState<{ done: number; total: number } | null>(null)
   const [toast, setToast] = useState<ToastState | null>(null)
   const corridors = useQuery({ queryKey: ['admin-corridors'], queryFn: () => api<{ items: Corridor[]; total: number }>('/corridors?active_only=false') })
   const posts = useQuery({ queryKey: ['corridor-posts'], queryFn: () => api<{ items: CustomsPost[] }>('/posts?page_size=500') })
   const countries = useQuery({ queryKey: ['countries'], queryFn: () => api<Country[]>('/countries') })
-  const borderPosts = useMemo(() => (posts.data?.items || []).filter((p) => p.post_type === 'CHBP' && p.latitude != null), [posts.data])
-  const previewRoute = useMutation<PreviewResult, ApiError, boolean>({ mutationFn: (force) => api<PreviewResult>('/corridors/preview', { method: 'POST', body: JSON.stringify({ waypoints: form.waypoints, force }) }), onSuccess: (result) => { if (result.status === 'available' && result.geometry) { setPreview(result.geometry); setPreviewMeta(result); setToast({ type: 'success', message: result.cached ? 'Route cache’dan olindi' : 'OSRM route yaratdi' }) } else setToast({ type: 'error', message: result.message || 'Avtomobil yo‘li topilmadi' }) }, onError: (e) => setToast({ type: 'error', message: e.message }) })
-  const save = useMutation({ mutationFn: () => editing ? api(`/corridors/${editing.id}`, { method: 'PATCH', body: JSON.stringify({ name: form.name, status: form.status, color: form.color, priority: form.priority, is_active: form.is_active, waypoints: form.waypoints, rebuild_route: true }) }) : api('/corridors', { method: 'POST', body: JSON.stringify({ ...form, build_route: true }) }), onSuccess: () => { void client.invalidateQueries({ queryKey: ['admin-corridors'] }); close(); setToast({ type: 'success', message: 'Korridor saqlandi' }) }, onError: (e) => setToast({ type: 'error', message: e instanceof ApiError ? e.message : 'Saqlashda xato' }) })
-  const remove = useMutation({ mutationFn: (id: string) => api(`/corridors/${id}`, { method: 'DELETE' }), onSuccess: () => { void client.invalidateQueries({ queryKey: ['admin-corridors'] }); setToast({ type: 'success', message: 'Korridor nofaol qilindi' }) } })
-  const close = () => { setOpen(false); setEditing(null); setForm(empty); setPreview(undefined); setPreviewMeta(null) }
-  const startEdit = (c: Corridor) => { setEditing(c); setForm({ code: c.code, name: c.name, origin_country_code: c.origin_country_code || '', destination_country_code: c.destination_country_code || '', entry_post_code: c.entry_post_code, exit_post_code: c.exit_post_code, status: c.status, color: c.color || '#22d3ee', priority: c.priority, is_active: c.is_active, waypoints: c.waypoints }); setPreview(c.geometry); setOpen(true) }
-  const selectPost = (kind: 'entry' | 'exit', code: string) => {
-    const post = borderPosts.find((p) => p.post_code === code); if (!post?.latitude || !post.longitude) return
-    const waypointType = kind === 'entry' ? 'ENTRY_POST' : 'EXIT_POST'
-    const filtered = form.waypoints.filter((w) => w.waypoint_type !== waypointType)
-    const point: Waypoint = { sequence_no: kind === 'entry' ? 0 : filtered.length + 1, waypoint_type: waypointType, latitude: post.latitude, longitude: post.longitude, post_code: code, label: post.post_name }
-    const next = kind === 'entry' ? [point, ...filtered] : [...filtered, point]
-    setForm({ ...form, [`${kind}_post_code`]: code, waypoints: next.map((w, i) => ({ ...w, sequence_no: i })) }); setPreview(undefined)
+  const borderPosts = useMemo(() => (posts.data?.items || []).filter((post) => post.post_type === 'CHBP' && post.latitude != null && post.longitude != null), [posts.data])
+  const requiredTypes: Waypoint['waypoint_type'][] = ['ORIGIN_GATEWAY', 'ENTRY_POST', 'EXIT_POST', 'DESTINATION_GATEWAY']
+  const requiredReady = Boolean(form.code.trim() && form.name.trim() && form.origin_country_code && form.destination_country_code && form.entry_post_code && form.exit_post_code && requiredTypes.every((type) => form.waypoints.some((point) => point.waypoint_type === type)))
+
+  const previewRoute = useMutation<PreviewResult, ApiError, boolean>({
+    mutationFn: (force) => api<PreviewResult>('/corridors/preview', { method: 'POST', body: JSON.stringify({ waypoints: form.waypoints, force, routing_profile: form.routing_profile }) }),
+    onSuccess: (result) => {
+      if (result.status === 'available' && result.geometry) {
+        setPreview(result.geometry); setPreviewMeta(result)
+        setToast({ type: 'success', message: `${result.provider.toUpperCase()} avtomobil yo'li yaratdi${result.cached ? ' (cache)' : ''}` })
+      } else setToast({ type: 'error', message: result.message || "Avtomobil yo'li topilmadi" })
+    },
+    onError: (error) => setToast({ type: 'error', message: error.message }),
+  })
+  const save = useMutation({
+    mutationFn: () => editing
+      ? api(`/corridors/${editing.id}`, { method: 'PATCH', body: JSON.stringify({ name: form.name, origin_country_code: form.origin_country_code, destination_country_code: form.destination_country_code, entry_post_code: form.entry_post_code, exit_post_code: form.exit_post_code, status: form.status, color: form.color, routing_profile: form.routing_profile, priority: form.priority, is_active: form.is_active, waypoints: form.waypoints, rebuild_route: true }) })
+      : api('/corridors', { method: 'POST', body: JSON.stringify({ ...form, build_route: true }) }),
+    onSuccess: () => { void client.invalidateQueries({ queryKey: ['admin-corridors'] }); close(); setToast({ type: 'success', message: "Corridor va uning barcha nuqtalari bazaga saqlandi" }) },
+    onError: (error) => setToast({ type: 'error', message: error instanceof ApiError ? error.message : 'Saqlashda xato' }),
+  })
+  const remove = useMutation({ mutationFn: (id: string) => api(`/corridors/${id}`, { method: 'DELETE' }), onSuccess: () => { void client.invalidateQueries({ queryKey: ['admin-corridors'] }); setToast({ type: 'success', message: 'Corridor nofaol qilindi' }) } })
+  const rebuildAll = useMutation({
+    mutationFn: async () => {
+      const ids = (corridors.data?.items || []).filter((corridor) => corridor.is_active).map((corridor) => corridor.id)
+      let updated = 0; const failed: RebuildResult['failed'] = []
+      setRebuildProgress({ done: 0, total: ids.length })
+      for (let index = 0; index < ids.length; index += 5) {
+        const batch = ids.slice(index, index + 5)
+        const result = await api<RebuildResult>('/corridors/rebuild-road-geometries', { method: 'POST', body: JSON.stringify({ corridor_ids: batch, routing_profile: 'driving' }) })
+        updated += result.updated.length; failed.push(...result.failed); setRebuildProgress({ done: Math.min(index + batch.length, ids.length), total: ids.length })
+      }
+      return { updated, failed, total: ids.length }
+    },
+    onSuccess: (result) => { void client.invalidateQueries({ queryKey: ['admin-corridors'] }); setRebuildProgress(null); setToast({ type: result.failed.length ? 'error' : 'success', message: `${result.updated}/${result.total} ta corridor avtomobil yo'li bo'yicha yangilandi${result.failed.length ? `; ${result.failed.length} ta tekshiruvda` : ''}` }) },
+    onError: (error) => { setRebuildProgress(null); setToast({ type: 'error', message: error instanceof ApiError ? error.message : 'Corridorlarni yangilashda xato' }) },
+  })
+
+  const clearPreview = () => { setPreview(undefined); setPreviewMeta(null) }
+  const close = () => { setOpen(false); setEditing(null); setForm(blank()); setMarkMode('VIA'); clearPreview() }
+  const openNew = () => { setEditing(null); setForm(blank()); setMarkMode('VIA'); clearPreview(); setOpen(true) }
+  const startEdit = (corridor: Corridor) => {
+    setEditing(corridor)
+    setForm({ code: corridor.code, name: corridor.name, origin_country_code: corridor.origin_country_code || '', destination_country_code: corridor.destination_country_code || '', entry_post_code: corridor.entry_post_code, exit_post_code: corridor.exit_post_code, status: corridor.status, color: corridor.color || '#22d3ee', routing_profile: corridor.routing_profile || 'driving', priority: corridor.priority, is_active: corridor.is_active, waypoints: corridor.waypoints })
+    setPreview(corridor.geometry); setPreviewMeta(corridor.geometry ? { status: 'available', geometry: corridor.geometry, distance_meters: corridor.distance_meters, duration_seconds: corridor.duration_seconds, provider: corridor.routing_provider || 'router', cached: true } : null); setOpen(true)
   }
-  const addVia = (latitude: number, longitude: number) => { const exitIndex = form.waypoints.findIndex((w) => w.waypoint_type === 'EXIT_POST'); const point: Waypoint = { sequence_no: 0, waypoint_type: 'VIA', latitude, longitude, label: 'Qo‘lda belgilangan VIA' }; const next = [...form.waypoints]; next.splice(exitIndex < 0 ? next.length : exitIndex, 0, point); setForm({...form, waypoints: next.map((w, i) => ({...w, sequence_no: i}))}); setPreview(undefined) }
-  const move = (index: number, latitude: number, longitude: number) => setForm({...form, waypoints: form.waypoints.map((w, i) => i === index ? {...w, latitude, longitude} : w)})
-  const shift = (index: number, direction: -1 | 1) => { const target = index + direction; if (target < 0 || target >= form.waypoints.length) return; const next = [...form.waypoints]; [next[index], next[target]] = [next[target], next[index]]; setForm({...form, waypoints: next.map((w, i) => ({...w, sequence_no: i}))}) }
-  return <AdminLayout title="Transport korridorlari" subtitle={`${corridors.data?.total ?? 0} ta korridor · faqat tasdiqlangan yo'l geometriyasi`} actions={<button className="btn primary" onClick={() => { setForm(empty); setOpen(true) }}><Plus/> Yangi korridor</button>}>
-    <div className="corridor-cards">{corridors.data?.items.map((c) => <article className="corridor-admin-card" key={c.id}><div className="corridor-color" style={{ background: c.color || '#22d3ee' }}/><div className="corridor-card-main"><div><span className={`status ${c.route_needs_review ? 'review' : 'active'}`}><i/>{c.route_needs_review ? 'Tekshiruv kerak' : c.status}</span><code>{c.code}</code></div><h3>{c.name}</h3><p>{c.entry_post_code} <span>→</span> {c.exit_post_code}</p></div><div className="corridor-card-metrics"><span><small>MASOFA</small><strong>{c.distance_meters ? `${Math.round(c.distance_meters / 1000)} km` : '—'}</strong></span><span><small>WAYPOINT</small><strong>{c.waypoints.length}</strong></span></div><div className="row-actions"><button onClick={() => startEdit(c)} title="Tahrirlash"><Pencil/></button><button onClick={() => confirm('Korridor nofaol qilinsinmi?') && remove.mutate(c.id)}><Trash2/></button></div></article>)}</div>
-    {!corridors.isLoading && !corridors.data?.items.length && <div className="empty-state panel"><Route/><strong>Korridor mavjud emas</strong><span>Birinchi tasdiqlangan route yarating.</span></div>}
-    {open && <div className="modal-backdrop"><div className="admin-modal route-modal"><div className="modal-header"><div><p className="eyebrow">KORRIDOR MUHARRIRI</p><h2>{editing ? editing.name : "Yangi transport yo'lagi"}</h2></div><button onClick={close}><X/></button></div><div className="route-editor"><div className="route-form"><div className="form-grid"><label><span>Korridor kodi *</span><input disabled={!!editing} required value={form.code} onChange={(e) => setForm({...form, code: e.target.value.toUpperCase()})}/></label><label><span>Ustuvorlik</span><input type="number" min={1} value={form.priority} onChange={(e) => setForm({...form, priority: Number(e.target.value)})}/></label><label className="full"><span>Nomi *</span><input required value={form.name} onChange={(e) => setForm({...form, name: e.target.value})}/></label><label><span>Boshlanish davlati</span><select value={form.origin_country_code} onChange={(e) => setForm({...form, origin_country_code: e.target.value})}>{countries.data?.map((c) => <option key={c.alpha2} value={c.alpha2}>{c.flag} {c.name}</option>)}</select></label><label><span>Tugash davlati</span><select value={form.destination_country_code} onChange={(e) => setForm({...form, destination_country_code: e.target.value})}>{countries.data?.map((c) => <option key={c.alpha2} value={c.alpha2}>{c.flag} {c.name}</option>)}</select></label><label><span>Kirish posti *</span><select value={form.entry_post_code} onChange={(e) => selectPost('entry', e.target.value)}><option value="">Tanlang</option>{borderPosts.map((p) => <option key={p.id} value={p.post_code}>{p.post_code} · {p.post_name}</option>)}</select></label><label><span>Chiqish posti *</span><select value={form.exit_post_code} onChange={(e) => selectPost('exit', e.target.value)}><option value="">Tanlang</option>{borderPosts.map((p) => <option key={p.id} value={p.post_code}>{p.post_code} · {p.post_name}</option>)}</select></label></div><div className="waypoint-header"><span><strong>Waypointlar</strong><small>Xaritaga bosib VIA nuqta qo'shing</small></span><b>{form.waypoints.length}</b></div><div className="waypoint-list">{form.waypoints.map((w, i) => <div key={`${w.waypoint_type}-${i}`}><b>{i + 1}</b><span><strong>{w.label || w.waypoint_type}</strong><small>{w.latitude.toFixed(5)}, {w.longitude.toFixed(5)}</small></span><em>{w.waypoint_type}</em><button disabled={w.waypoint_type === 'ENTRY_POST'} onClick={() => shift(i, -1)}><ChevronUp/></button><button disabled={w.waypoint_type === 'EXIT_POST'} onClick={() => shift(i, 1)}><ChevronDown/></button>{w.waypoint_type === 'VIA' && <button onClick={() => setForm({...form, waypoints: form.waypoints.filter((_, j) => j !== i).map((p, j) => ({...p, sequence_no: j}))})}><X/></button>}</div>)}</div><div className="route-actions"><button className="btn ghost" disabled={form.waypoints.length < 2 || previewRoute.isPending} onClick={() => previewRoute.mutate(false)}><Eye/> {previewRoute.isPending ? 'Hisoblanmoqda…' : 'Route preview'}</button><button className="btn ghost" disabled={form.waypoints.length < 2} onClick={() => previewRoute.mutate(true)}><RotateCw/> Qayta hisoblash</button><button className="btn primary" disabled={!preview || save.isPending} onClick={() => save.mutate()}><Check/> Saqlash</button></div></div><div className="route-map-side"><RouteBuilderMap waypoints={form.waypoints} geometry={preview} onAdd={addVia} onMove={move}/>{previewMeta && <div className="route-preview-meta"><span><Map/> <strong>{Math.round((previewMeta.distance_meters || 0)/1000)} km</strong></span><span><Route/> <strong>{Math.round((previewMeta.duration_seconds || 0)/3600)} soat</strong></span><small>{previewMeta.cached ? 'CACHE' : 'OSRM'}</small></div>}</div></div></div></div>}
+  const selectCountry = (kind: 'origin' | 'destination', code: string) => {
+    const country = countries.data?.find((item) => item.alpha2 === code)
+    const waypointType: Waypoint['waypoint_type'] = kind === 'origin' ? 'ORIGIN_GATEWAY' : 'DESTINATION_GATEWAY'
+    const without = form.waypoints.filter((point) => point.waypoint_type !== waypointType)
+    const next = country?.latitude != null && country.longitude != null ? normalize([...without, { sequence_no: 0, waypoint_type: waypointType, latitude: country.latitude, longitude: country.longitude, label: `${country.name} — yuk ${kind === 'origin' ? 'boshlanish' : 'tugash'} nuqtasi` }]) : normalize(without)
+    setForm({ ...form, [`${kind}_country_code`]: code, waypoints: next }); clearPreview()
+  }
+  const selectPost = (kind: 'entry' | 'exit', code: string) => {
+    const post = borderPosts.find((item) => item.post_code === code)
+    if (post?.latitude == null || post.longitude == null) return
+    const waypointType: Waypoint['waypoint_type'] = kind === 'entry' ? 'ENTRY_POST' : 'EXIT_POST'
+    const next = normalize([...form.waypoints.filter((point) => point.waypoint_type !== waypointType), { sequence_no: 0, waypoint_type: waypointType, latitude: post.latitude, longitude: post.longitude, post_code: code, label: post.post_name }])
+    setForm({ ...form, [`${kind}_post_code`]: code, waypoints: next }); clearPreview()
+  }
+  const addMapPoint = (latitude: number, longitude: number) => {
+    const label = markMode === 'VIA' ? "Yo'lda belgilangan oraliq nuqta" : markMode === 'ORIGIN_GATEWAY' ? 'Yuk boshlanish nuqtasi' : 'Yuk tugash nuqtasi'
+    const base = markMode === 'VIA' ? form.waypoints : form.waypoints.filter((point) => point.waypoint_type !== markMode)
+    setForm({ ...form, waypoints: normalize([...base, { sequence_no: base.length, waypoint_type: markMode, latitude, longitude, label }]) }); clearPreview()
+  }
+  const move = (index: number, latitude: number, longitude: number) => { setForm({ ...form, waypoints: form.waypoints.map((point, current) => current === index ? { ...point, latitude, longitude } : point) }); clearPreview() }
+  const removePoint = (index: number) => { setForm({ ...form, waypoints: normalize(form.waypoints.filter((_, current) => current !== index)) }); clearPreview() }
+  const shiftVia = (index: number, direction: -1 | 1) => {
+    const target = index + direction
+    if (target < 0 || target >= form.waypoints.length || form.waypoints[index].waypoint_type !== 'VIA' || form.waypoints[target].waypoint_type !== 'VIA') return
+    const next = [...form.waypoints]; [next[index], next[target]] = [next[target], next[index]]; setForm({ ...form, waypoints: next.map((point, sequence_no) => ({ ...point, sequence_no })) }); clearPreview()
+  }
+
+  const actions = <><button className="btn ghost" disabled={rebuildAll.isPending || !corridors.data?.items.length} onClick={() => rebuildAll.mutate()}><RefreshCw className={rebuildAll.isPending ? 'spin' : ''}/> {rebuildProgress ? `${rebuildProgress.done}/${rebuildProgress.total}` : "Barcha yo'llarni yangilash"}</button><button className="btn primary" onClick={openNew}><Plus/> Yangi corridor</button></>
+  return <AdminLayout title="Transport corridorlari" subtitle={`${corridors.data?.total ?? 0} ta corridor · Yandex/OSRM avtomobil yo'li geometriyasi`} actions={actions}>
+    <div className="corridor-cards">{corridors.data?.items.map((corridor) => <article className="corridor-admin-card" key={corridor.id}><div className="corridor-color" style={{ background: corridor.color || '#22d3ee' }}/><div className="corridor-card-main"><div><span className={`status ${corridor.route_needs_review ? 'review' : 'active'}`}><i/>{corridor.route_needs_review ? 'Tekshiruv kerak' : corridor.status}</span><code>{corridor.code}</code></div><h3>{corridor.name}</h3><p>{corridor.origin_country_code} · {corridor.entry_post_code} <span>→</span> {corridor.exit_post_code} · {corridor.destination_country_code}</p></div><div className="corridor-card-metrics"><span><small>MASOFA</small><strong>{corridor.distance_meters ? `${Math.round(corridor.distance_meters / 1000)} km` : '—'}</strong></span><span><small>ROUTER</small><strong>{(corridor.routing_provider || '—').toUpperCase()}</strong></span><span><small>NUQTA</small><strong>{corridor.waypoints.length}</strong></span></div><div className="row-actions"><button onClick={() => startEdit(corridor)} title="Tahrirlash"><Pencil/></button><button onClick={() => confirm('Corridor nofaol qilinsinmi?') && remove.mutate(corridor.id)}><Trash2/></button></div></article>)}</div>
+    {!corridors.isLoading && !corridors.data?.items.length && <div className="empty-state panel"><Route/><strong>Corridor mavjud emas</strong><span>Birinchi avtomobil yo'li corridorini yarating.</span></div>}
+    {open && <div className="modal-backdrop"><div className="admin-modal route-modal"><div className="modal-header"><div><p className="eyebrow">CORRIDOR KONSTRUKTORI</p><h2>{editing ? editing.name : "Yangi transport corridori"}</h2></div><button onClick={close}><X/></button></div><div className="route-editor"><div className="route-form">
+      <div className="corridor-steps"><span className={form.origin_country_code && form.destination_country_code ? 'done' : 'active'}><b>1</b> Davlatlar</span><span className={form.entry_post_code && form.exit_post_code ? 'done' : ''}><b>2</b> Postlar</span><span className={requiredTypes.every((type) => form.waypoints.some((point) => point.waypoint_type === type)) ? 'done' : ''}><b>3</b> Nuqtalar</span><span className={preview ? 'done' : ''}><b>4</b> Yo'l</span></div>
+      <div className="form-grid"><label><span>Corridor kodi *</span><input disabled={!!editing} required value={form.code} onChange={(event) => setForm({ ...form, code: event.target.value.toUpperCase() })}/></label><label><span>Transport profili</span><select value={form.routing_profile} onChange={(event) => { setForm({ ...form, routing_profile: event.target.value as FormState['routing_profile'] }); clearPreview() }}><option value="driving">Avtomobil</option><option value="truck">Yuk avtomobili (Yandex)</option></select></label><label className="full"><span>Nomi *</span><input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })}/></label><label><span>Yo'lak rangi</span><input type="color" value={form.color} onChange={(event) => setForm({ ...form, color: event.target.value })}/></label><label><span>Ustuvorlik</span><input type="number" min={1} max={9999} value={form.priority} onChange={(event) => setForm({ ...form, priority: Number(event.target.value) })}/></label><label><span>Yuk boshlanadigan davlat *</span><select value={form.origin_country_code} onChange={(event) => selectCountry('origin', event.target.value)}><option value="">Tanlang</option>{countries.data?.map((country) => <option key={country.alpha2} value={country.alpha2}>{country.flag} {country.name}</option>)}</select></label><label><span>Yuk tugaydigan davlat *</span><select value={form.destination_country_code} onChange={(event) => selectCountry('destination', event.target.value)}><option value="">Tanlang</option>{countries.data?.map((country) => <option key={country.alpha2} value={country.alpha2}>{country.flag} {country.name}</option>)}</select></label><label><span>Kirish posti *</span><select value={form.entry_post_code} onChange={(event) => selectPost('entry', event.target.value)}><option value="">Tanlang</option>{borderPosts.map((post) => <option key={post.id} value={post.post_code}>{post.post_code} · {post.post_name}</option>)}</select></label><label><span>Chiqish posti *</span><select value={form.exit_post_code} onChange={(event) => selectPost('exit', event.target.value)}><option value="">Tanlang</option>{borderPosts.map((post) => <option key={post.id} value={post.post_code}>{post.post_code} · {post.post_name}</option>)}</select></label></div>
+      <div className="waypoint-header"><span><strong>Xaritada nuqta belgilash</strong><small>Rejimni tanlang, so'ng xaritada kerakli joyni bosing</small></span><b>{form.waypoints.length}</b></div>
+      <div className="mark-mode"><button className={markMode === 'ORIGIN_GATEWAY' ? 'active' : ''} onClick={() => setMarkMode('ORIGIN_GATEWAY')}><Flag/> Boshlanish</button><button className={markMode === 'VIA' ? 'active' : ''} onClick={() => setMarkMode('VIA')}><MousePointer2/> Oraliq nuqta</button><button className={markMode === 'DESTINATION_GATEWAY' ? 'active' : ''} onClick={() => setMarkMode('DESTINATION_GATEWAY')}><MapPin/> Tugash</button></div>
+      <div className="waypoint-list">{form.waypoints.map((waypoint, index) => { const via = waypoint.waypoint_type === 'VIA'; return <div key={`${waypoint.waypoint_type}-${index}`}><b>{index + 1}</b><span><strong>{waypoint.label || waypoint.waypoint_type}</strong><small>{waypoint.latitude.toFixed(5)}, {waypoint.longitude.toFixed(5)}</small></span><em>{waypoint.waypoint_type}</em><button disabled={!via || form.waypoints[index - 1]?.waypoint_type !== 'VIA'} onClick={() => shiftVia(index, -1)}><ChevronUp/></button><button disabled={!via || form.waypoints[index + 1]?.waypoint_type !== 'VIA'} onClick={() => shiftVia(index, 1)}><ChevronDown/></button>{waypoint.waypoint_type !== 'ENTRY_POST' && waypoint.waypoint_type !== 'EXIT_POST' ? <button onClick={() => removePoint(index)}><X/></button> : <i/>}</div> })}</div>
+      <div className="route-actions"><button className="btn ghost" disabled={!requiredReady || previewRoute.isPending} onClick={() => previewRoute.mutate(false)}><Eye/> {previewRoute.isPending ? 'Yo‘l qurilmoqda…' : "Avtomobil yo'lini ko'rish"}</button><button className="btn ghost" disabled={!requiredReady || previewRoute.isPending} onClick={() => previewRoute.mutate(true)}><RotateCw/> Qayta hisoblash</button><button className="btn primary" disabled={!preview || save.isPending} onClick={() => save.mutate()}><Check/> Bazaga saqlash</button></div>
+    </div><div className="route-map-side"><RouteBuilderMap waypoints={form.waypoints} geometry={preview} onAdd={addMapPoint} onMove={move}/><div className="map-mark-hint"><MousePointer2/> <span><strong>{markMode === 'VIA' ? "Oraliq nuqta" : markMode === 'ORIGIN_GATEWAY' ? 'Boshlanish nuqtasi' : 'Tugash nuqtasi'} rejimi</strong><small>Xaritani bosing; markerlarni sudrab aniqlashtirish mumkin</small></span></div>{previewMeta && <div className="route-preview-meta"><span><Map/> <strong>{Math.round((previewMeta.distance_meters || 0) / 1000)} km</strong></span><span><Route/> <strong>{Math.round((previewMeta.duration_seconds || 0) / 3600)} soat</strong></span><small>{previewMeta.provider.toUpperCase()}</small></div>}</div></div></div></div>}
     <Toast toast={toast} onClose={() => setToast(null)}/>
   </AdminLayout>
 }
