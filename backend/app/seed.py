@@ -1,3 +1,5 @@
+import asyncio
+import hashlib
 import json
 import math
 import random
@@ -7,14 +9,18 @@ import structlog
 from geoalchemy2.functions import ST_GeomFromGeoJSON, ST_SetSRID, ST_MakePoint
 from sqlalchemy import delete, func, insert, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import noload
+from sqlalchemy.orm import noload, selectinload
 
 from app.config import settings
 from app.models import Corridor, CorridorWaypoint, CountryGateway, CustomsPost, TransitDeclaration, User
 from app.security import hash_password, verify_password
+from app.routing import RoutingService
 
 
 logger = structlog.get_logger()
+
+LEGACY_SEED_GEOMETRY_SOURCES = {"verified-osrm-seed-v2", "verified-osrm-seed-v3", "verified-osrm-seed-v4"}
+PENDING_SEED_GEOMETRY_SOURCE = "seed-routing-pending-v5"
 
 
 POSTS = [
@@ -415,16 +421,15 @@ async def seed_all(db: AsyncSession) -> None:
     }
     current_route_codes = {route["code"] for route in ROUTES}
     for code, corridor in existing_corridors.items():
-        if code not in current_route_codes and corridor.geometry_source in {"verified-osrm-seed-v2", "verified-osrm-seed-v3", "verified-osrm-seed-v4"}:
+        if code not in current_route_codes and corridor.geometry_source in LEGACY_SEED_GEOMETRY_SOURCES | {PENDING_SEED_GEOMETRY_SOURCE}:
             corridor.is_active = False
             corridor.status = "INACTIVE"
     for priority, route in enumerate(ROUTES, start=1):
-        geometry = {"type": "LineString", "coordinates": route["coords"]}
         corridor = existing_corridors.get(route["code"])
         if corridor is not None:
-            if corridor.geometry_source == "verified-osrm-seed-v4":
+            if corridor.geometry_source == PENDING_SEED_GEOMETRY_SOURCE:
                 continue
-            if corridor.geometry_source not in {"verified-osrm-seed-v2", "verified-osrm-seed-v3"}:
+            if corridor.geometry_source not in LEGACY_SEED_GEOMETRY_SOURCES:
                 continue
         if corridor is None:
             corridor = Corridor(code=route["code"])
@@ -434,14 +439,14 @@ async def seed_all(db: AsyncSession) -> None:
         corridor.destination_country_code = route["destination"]
         corridor.entry_post_code = route["entry"]
         corridor.exit_post_code = route["exit"]
-        corridor.status = "ACTIVE"
+        corridor.status = "REVIEW"
         corridor.color = route["color"]
-        corridor.geometry_source = "verified-osrm-seed-v4"
-        corridor.routing_provider = "osrm-seed-cache"
-        corridor.geometry = ST_GeomFromGeoJSON(json.dumps(geometry))
-        corridor.distance_meters = route["distance"]
-        corridor.duration_seconds = route["duration"]
-        corridor.route_needs_review = False
+        corridor.geometry_source = PENDING_SEED_GEOMETRY_SOURCE
+        corridor.routing_provider = "pending"
+        corridor.geometry = None
+        corridor.distance_meters = None
+        corridor.duration_seconds = None
+        corridor.route_needs_review = True
         corridor.priority = priority
         corridor.is_active = True
         await db.flush()
@@ -459,3 +464,56 @@ async def seed_all(db: AsyncSession) -> None:
     if settings.enable_demo_seed:
         await seed_demo_declarations(db)
     await db.commit()
+
+
+async def rebuild_pending_seed_routes(session_factory) -> None:
+    """Replace every legacy hand-drawn demo line with an actual router result."""
+    async with session_factory() as db:
+        corridor_ids = list((await db.scalars(
+            select(Corridor.id).where(
+                Corridor.is_active.is_(True),
+                Corridor.geometry_source == PENDING_SEED_GEOMETRY_SOURCE,
+            ).order_by(Corridor.priority, Corridor.code)
+        )).all())
+    if not corridor_ids:
+        return
+    await logger.ainfo("seed_route_rebuild_started", total=len(corridor_ids), provider=RoutingService._provider())
+    rebuilt = failed = 0
+    for corridor_id in corridor_ids:
+        async with session_factory() as db:
+            corridor = await db.scalar(
+                select(Corridor).options(selectinload(Corridor.waypoints)).where(Corridor.id == corridor_id)
+            )
+            if corridor is None or corridor.geometry_source != PENDING_SEED_GEOMETRY_SOURCE:
+                continue
+            ordered = sorted(corridor.waypoints, key=lambda point: point.sequence_no)
+            waypoint_data = [{"latitude": point.latitude, "longitude": point.longitude} for point in ordered]
+            try:
+                result = await RoutingService(db).route(waypoint_data, profile=corridor.routing_profile)
+                if result.available and result.geometry:
+                    corridor.geometry = ST_GeomFromGeoJSON(json.dumps(result.geometry))
+                    corridor.geometry_hash = hashlib.sha256(json.dumps(result.geometry, sort_keys=True).encode()).hexdigest()
+                    corridor.distance_meters = result.distance_meters
+                    corridor.duration_seconds = result.duration_seconds
+                    corridor.geometry_source = f"{result.provider}-router"
+                    corridor.routing_provider = result.provider
+                    corridor.route_needs_review = False
+                    corridor.status = "ACTIVE"
+                    rebuilt += 1
+                else:
+                    corridor.geometry = None
+                    corridor.distance_meters = None
+                    corridor.duration_seconds = None
+                    corridor.route_needs_review = True
+                    corridor.status = "REVIEW"
+                    failed += 1
+                    await logger.awarning("seed_route_rebuild_failed", code=corridor.code, message=result.message)
+                await db.commit()
+                if not result.cached:
+                    await asyncio.sleep(1.05)
+            except Exception as exc:
+                await db.rollback()
+                failed += 1
+                await logger.aerror("seed_route_rebuild_error", code=corridor.code, error=type(exc).__name__)
+                await asyncio.sleep(1.05)
+    await logger.ainfo("seed_route_rebuild_finished", total=len(corridor_ids), rebuilt=rebuilt, failed=failed)
