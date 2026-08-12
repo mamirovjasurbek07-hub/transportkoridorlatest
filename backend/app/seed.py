@@ -1,9 +1,10 @@
 import json
+import math
 import random
 from datetime import UTC, date, datetime, time, timedelta
 
 from geoalchemy2.functions import ST_GeomFromGeoJSON, ST_SetSRID, ST_MakePoint
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, insert, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -48,6 +49,15 @@ POSTS = [
     ("00102", "Avia yuklar TIF", "TIF", None), ("00107", "Elektron tijorat TIF", "TIF", None), ("00110", "Toshkent-Humo aeroporti", "AERO", None),
 ]
 
+
+def _official_post_name(code: str, name: str, post_type: str) -> str:
+    if code == "26013":
+        return "“Chuqursoy texnik idora” temir yo'l chegara bojxona posti"
+    if post_type == "TIF":
+        base = name[:-4] if name.endswith(" TIF") else name
+        return f"“{base}” TIF bojxona posti"
+    return f"“{name}” chegara bojxona posti"
+
 COORDINATES = {
     "35004": (43.1355, 58.5986), "35003": (42.4045, 59.4512), "06010": (39.1537, 63.5141),
     "10008": (38.8841, 65.7172), "22017": (37.2251, 67.4274), "22003": (38.5065, 68.0205),
@@ -66,17 +76,78 @@ ROUTES = [
      "coords": [[69.072837,41.467402],[69.206447,41.476017],[69.199881,41.35],[69.217808,41.17171],[69.279502,41.149757],[69.335079,41.072631],[69.26538,40.942374],[69.30057,40.885732],[69.128471,40.735853],[68.94522,40.683625],[68.884472,40.619346],[68.720453,40.625978],[68.780188,40.520054],[68.73154,40.5085],[68.633447,40.571743],[68.521507,40.503588],[68.37678,40.567233],[68.031878,40.266602],[67.902611,40.204426],[67.850359,40.119931],[67.654724,40.063825],[67.445205,39.83737],[66.970061,39.660002],[66.925525,39.587213],[66.751798,39.5374],[66.585525,39.543094],[66.497848,39.500488],[66.263646,39.615939],[66.108737,39.567668],[65.989622,39.582485],[65.966557,39.646407],[65.761688,39.602143],[65.770382,39.533066],[65.77347,39.41589],[65.709521,39.350961],[65.599948,39.062179],[65.155624,39.268174],[65.063535,39.374423],[64.792599,39.509907],[64.582249,39.733129],[64.460344,39.770201],[64.199518,39.739215],[64.170574,39.67931],[63.973011,39.603789],[63.84359,39.505314],[63.710277,39.207698],[63.597718,39.224252],[63.561989,39.117741],[63.501116,39.12643],[63.514618,39.150282]]},
     {"code": "KG-UZ-AF-A", "name": "Qirg'iziston — O'zbekiston — Afg'oniston", "origin": "KG", "destination": "AF", "entry": "03002", "exit": "22017", "color": "#38bdf8",
      "distance": 1273102, "duration": 82489,
-     "waypoints": [[72.3436,40.4443],[71.78,40.38],[70.94,40.51],[69.65,40.72],[69.28,41.15],[68.78,40.52],[67.85,40.12],[66.97,39.66],[67.31,38.55],[67.4274,37.2251]],
-     "coords": [[72.345325,40.457097],[72.33326,40.504105],[72.120536,40.514871],[71.779961,40.380019],[71.70034,40.429136],[71.324497,40.326352],[71.213516,40.470422],[70.996192,40.533098],[70.939649,40.512184],[70.829115,40.682111],[70.779868,40.883889],[70.447452,41.155461],[70.311443,41.074041],[70.172754,41.059501],[69.810896,40.910266],[69.597102,40.920524],[69.554754,40.816112],[69.596394,40.717477],[69.654702,40.716352],[69.596105,40.717892],[69.554668,40.816667],[69.59621,40.928346],[69.436336,41.13072],[69.327982,41.164972],[69.331138,41.191383],[69.279502,41.149757],[69.335079,41.072631],[69.26538,40.942374],[69.30057,40.885732],[69.128471,40.735853],[68.94522,40.683625],[68.884472,40.619346],[68.720453,40.625978],[68.780188,40.520054],[68.73154,40.5085],[68.633447,40.571743],[68.521507,40.503588],[68.37678,40.567233],[68.031878,40.266602],[67.902611,40.204426],[67.850359,40.119931],[67.654724,40.063825],[67.445205,39.83737],[66.970061,39.660002],[66.926884,39.588036],[66.863195,39.566546],[66.565049,39.536773],[66.355487,39.375297],[66.253009,39.235054],[66.206768,39.056659],[66.228766,38.737674],[66.311084,38.629477],[66.34271,38.50248],[66.430405,38.480755],[66.475796,38.354878],[66.730375,38.305941],[66.943048,38.201967],[67.029195,38.218868],[67.011964,38.29058],[67.274667,38.515611],[67.011964,38.29058],[67.029195,38.218868],[66.982243,38.208335],[66.968204,38.060563],[67.065123,37.88565],[66.991729,37.761214],[66.995178,37.672423],[67.089789,37.575222],[67.179617,37.371187],[67.254278,37.382115],[67.375063,37.329158],[67.426604,37.224892]]},
+     "waypoints": [[72.3436,40.4443],[71.78,40.38],[70.94,40.51],[69.65,40.72],[69.28,41.15],[68.78,40.52],[67.85,40.12],[66.97,39.66],[67.4274,37.2251]],
+     "coords": [[72.345325,40.457097],[72.33326,40.504105],[72.120536,40.514871],[71.779961,40.380019],[71.70034,40.429136],[71.324497,40.326352],[71.213516,40.470422],[70.996192,40.533098],[70.939649,40.512184],[70.829115,40.682111],[70.779868,40.883889],[70.447452,41.155461],[70.311443,41.074041],[70.172754,41.059501],[69.810896,40.910266],[69.597102,40.920524],[69.554754,40.816112],[69.596394,40.717477],[69.654702,40.716352],[69.596105,40.717892],[69.554668,40.816667],[69.59621,40.928346],[69.436336,41.13072],[69.327982,41.164972],[69.331138,41.191383],[69.279502,41.149757],[69.335079,41.072631],[69.26538,40.942374],[69.30057,40.885732],[69.128471,40.735853],[68.94522,40.683625],[68.884472,40.619346],[68.720453,40.625978],[68.780188,40.520054],[68.73154,40.5085],[68.633447,40.571743],[68.521507,40.503588],[68.37678,40.567233],[68.031878,40.266602],[67.902611,40.204426],[67.850359,40.119931],[67.654724,40.063825],[67.445205,39.83737],[66.970061,39.660002],[66.926884,39.588036],[66.863195,39.566546],[66.565049,39.536773],[66.355487,39.375297],[66.253009,39.235054],[66.206768,39.056659],[66.228766,38.737674],[66.311084,38.629477],[66.34271,38.50248],[66.430405,38.480755],[66.475796,38.354878],[66.730375,38.305941],[66.943048,38.201967],[67.029195,38.218868],[66.982243,38.208335],[66.968204,38.060563],[67.065123,37.88565],[66.991729,37.761214],[66.995178,37.672423],[67.089789,37.575222],[67.179617,37.371187],[67.254278,37.382115],[67.375063,37.329158],[67.426604,37.224892]]},
     {"code": "TJ-UZ-KZ-A", "name": "Tojikiston — O'zbekiston — Qozog'iston", "origin": "TJ", "destination": "KZ", "entry": "27011", "exit": "27021", "color": "#fb4058",
      "distance": 249180, "duration": 17604,
      "waypoints": [[69.6056,40.1678],[69.45,40.43],[69.33,40.78],[69.28,41.15],[69.19,41.31],[69.0717,41.4688]],
      "coords": [[69.610227,40.166255],[69.637904,40.208796],[69.645402,40.256967],[69.635213,40.270676],[69.644041,40.271409],[69.637801,40.298532],[69.68264,40.313417],[69.707615,40.367671],[69.704316,40.397811],[69.683177,40.420724],[69.627609,40.421043],[69.440957,40.464783],[69.46123,40.430999],[69.464248,40.422903],[69.422509,40.412696],[69.396515,40.475878],[69.331544,40.494711],[69.328151,40.514953],[69.318378,40.518385],[69.324949,40.531801],[69.295892,40.54597],[69.2599,40.554928],[69.207011,40.550517],[69.213578,40.638664],[69.301582,40.654065],[69.298174,40.666838],[69.313776,40.685816],[69.313194,40.767405],[69.319765,40.782201],[69.327955,40.777977],[69.319862,40.782416],[69.326395,40.806118],[69.359289,40.834695],[69.353533,40.869281],[69.361391,40.869121],[69.340919,40.894237],[69.337138,40.887741],[69.301206,40.886155],[69.2721,40.909058],[69.265368,40.942256],[69.306289,41.000215],[69.335295,41.072689],[69.317878,41.141852],[69.298412,41.136981],[69.303581,41.145651],[69.294926,41.152696],[69.279502,41.149757],[69.271057,41.155868],[69.278435,41.164737],[69.221944,41.170788],[69.234598,41.194762],[69.229674,41.209053],[69.244833,41.21515],[69.237879,41.265327],[69.201859,41.28919],[69.19001,41.309972],[69.193678,41.325887],[69.227965,41.349447],[69.200111,41.41716],[69.205575,41.458944],[69.21677,41.465685],[69.204809,41.475948],[69.146838,41.460069],[69.111259,41.480178],[69.072837,41.467402]]},
     {"code": "TM-UZ-KZ-A", "name": "Turkmaniston — O'zbekiston — Qozog'iston", "origin": "TM", "destination": "KZ", "entry": "06010", "exit": "35004", "color": "#60a5fa",
      "distance": 1104209, "duration": 130819,
-     "waypoints": [[63.5141,39.1537],[64.46,39.77],[63.85,40.22],[62.93,41.05],[61.05,42.28],[59.60,42.46],[58.5986,43.1355]],
-     "coords": [[63.514618,39.150282],[63.501116,39.12643],[63.562624,39.116542],[63.597814,39.22411],[63.713257,39.207322],[63.843481,39.504864],[63.973638,39.604064],[64.17068,39.679262],[64.20084,39.739493],[64.460344,39.770201],[64.177262,40.044306],[63.898135,40.147899],[63.845347,40.218771],[63.826776,40.259166],[63.782393,40.165918],[63.465173,40.137696],[62.995203,40.457605],[62.778258,40.575817],[62.664655,40.583799],[62.121845,40.994401],[62.342334,41.053749],[62.712346,41.018592],[62.80372,41.045343],[62.835616,41.09522],[62.958138,41.038509],[62.932035,41.051775],[62.835616,41.09522],[62.80372,41.045343],[62.712346,41.018592],[62.342334,41.053749],[62.121845,40.994401],[61.978138,41.06005],[61.735239,41.276035],[61.546137,41.29462],[61.188159,41.415784],[61.039011,41.542312],[60.966755,41.55554],[60.952037,41.660314],[60.987158,41.688788],[60.902934,41.854929],[61.024809,41.955374],[61.022386,42.003696],[60.929151,41.999778],[60.893371,42.050809],[60.992428,42.098128],[60.893371,42.050809],[60.929151,41.999778],[61.022386,42.003696],[61.024809,41.955374],[60.902934,41.854929],[60.77351,41.941891],[60.401122,42.031978],[60.298783,42.212077],[60.173981,42.233155],[59.909285,42.398312],[59.649524,42.424398],[59.600105,42.459625],[59.459249,42.409643],[59.402466,42.42382],[59.071708,42.714848],[58.831725,43.051225],[58.617887,43.156483]]},
+     "waypoints": [[63.5141,39.1537],[64.46,39.77],[63.85,40.22],[59.60,42.46],[58.5986,43.1355]],
+     "coords": [[63.514618,39.150282],[63.501116,39.12643],[63.562624,39.116542],[63.597814,39.22411],[63.713257,39.207322],[63.843481,39.504864],[63.973638,39.604064],[64.17068,39.679262],[64.20084,39.739493],[64.460344,39.770201],[64.177262,40.044306],[63.898135,40.147899],[63.845347,40.218771],[63.826776,40.259166],[63.782393,40.165918],[63.465173,40.137696],[62.995203,40.457605],[62.778258,40.575817],[62.664655,40.583799],[62.121845,40.994401],[61.978138,41.06005],[61.735239,41.276035],[61.546137,41.29462],[61.188159,41.415784],[61.039011,41.542312],[60.966755,41.55554],[60.952037,41.660314],[60.987158,41.688788],[60.902934,41.854929],[60.77351,41.941891],[60.401122,42.031978],[60.298783,42.212077],[60.173981,42.233155],[59.909285,42.398312],[59.649524,42.424398],[59.600105,42.459625],[59.459249,42.409643],[59.402466,42.42382],[59.071708,42.714848],[58.831725,43.051225],[58.617887,43.156483]]},
 ]
+
+
+TASHKENT_JUNCTION = [69.279502, 41.149757]
+
+
+def _split_at_tashkent(coords: list[list[float]]) -> tuple[list[list[float]], list[list[float]]]:
+    index = min(range(len(coords)), key=lambda i: (coords[i][0] - TASHKENT_JUNCTION[0]) ** 2 + (coords[i][1] - TASHKENT_JUNCTION[1]) ** 2)
+    return coords[: index + 1], coords[index:]
+
+
+def _join(*segments: list[list[float]]) -> list[list[float]]:
+    result: list[list[float]] = []
+    for segment in segments:
+        result.extend(segment if not result else segment[1:])
+    return result
+
+
+def _road_length(coords: list[list[float]]) -> int:
+    total = 0.0
+    for first, second in zip(coords, coords[1:], strict=False):
+        lat1, lat2 = math.radians(first[1]), math.radians(second[1])
+        dlat = lat2 - lat1
+        dlng = math.radians(second[0] - first[0])
+        value = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlng / 2) ** 2
+        total += 6371000 * 2 * math.atan2(math.sqrt(value), math.sqrt(1 - value))
+    return round(total)
+
+
+def _derived_route(code: str, name: str, origin: str, destination: str, entry: str, exit: str, color: str, coords: list[list[float]]) -> dict:
+    distance = _road_length(coords)
+    return {
+        "code": code, "name": name, "origin": origin, "destination": destination,
+        "entry": entry, "exit": exit, "color": color, "distance": distance,
+        "duration": round(distance / 15),
+        "waypoints": [coords[0], TASHKENT_JUNCTION, coords[-1]], "coords": coords,
+    }
+
+
+for _base_route in ROUTES:
+    _base_route["distance"] = _road_length(_base_route["coords"])
+    _base_route["duration"] = round(_base_route["distance"] / 15)
+
+
+_route_by_code = {route["code"]: route for route in ROUTES}
+_dostlik_to_tashkent, _tashkent_to_ayritom = _split_at_tashkent(_route_by_code["KG-UZ-AF-A"]["coords"])
+_gishtkoprik_to_tashkent, _tashkent_to_olot = _split_at_tashkent(_route_by_code["KZ-UZ-TM-A"]["coords"])
+_oybek_to_tashkent, _tashkent_to_gishtkoprik = _split_at_tashkent(_route_by_code["TJ-UZ-KZ-A"]["coords"])
+_dostlik_to_gishtkoprik = _join(_dostlik_to_tashkent, _tashkent_to_gishtkoprik)
+_gishtkoprik_to_ayritom = _join(list(reversed(_tashkent_to_gishtkoprik)), _tashkent_to_ayritom)
+_dostlik_to_olot = _join(_dostlik_to_tashkent, _tashkent_to_olot)
+
+ROUTES.extend([
+    _derived_route("CN-UZ-UA-A", "Xitoy — O'zbekiston — Ukraina", "CN", "UA", "03002", "27021", "#fb4058", _dostlik_to_gishtkoprik),
+    _derived_route("RU-UZ-AF-A", "Rossiya — O'zbekiston — Afg'oniston", "RU", "AF", "27021", "22017", "#22d3ee", _gishtkoprik_to_ayritom),
+    _derived_route("AF-UZ-RU-A", "Afg'oniston — O'zbekiston — Rossiya", "AF", "RU", "22017", "27021", "#38bdf8", list(reversed(_gishtkoprik_to_ayritom))),
+    _derived_route("CN-UZ-TR-A", "Xitoy — O'zbekiston — Turkiya", "CN", "TR", "03002", "06010", "#f97316", _dostlik_to_olot),
+    _derived_route("TR-UZ-CN-A", "Turkiya — O'zbekiston — Xitoy", "TR", "CN", "06010", "03002", "#a78bfa", list(reversed(_dostlik_to_olot))),
+    _derived_route("AZ-UZ-KZ-A", "Ozarbayjon — O'zbekiston — Qozog'iston", "AZ", "KZ", "06010", "35004", "#34d399", _route_by_code["TM-UZ-KZ-A"]["coords"]),
+    _derived_route("GE-UZ-KG-A", "Gruziya — O'zbekiston — Qirg'iziston", "GE", "KG", "06010", "03002", "#60a5fa", list(reversed(_dostlik_to_olot))),
+    _derived_route("PK-UZ-KZ-A", "Pokiston — O'zbekiston — Qozog'iston", "PK", "KZ", "22017", "27021", "#e879f9", list(reversed(_gishtkoprik_to_ayritom))),
+])
 
 GATEWAYS = [
     ("CN", "Irkeshtam road gateway", "ORIGIN_GATEWAY", 39.7024, 73.9727, "KG", "Xitoy–Qirg'iziston avtomobil o'tish nuqtasi"),
@@ -87,28 +158,33 @@ GATEWAYS = [
 
 
 async def seed_demo_declarations(db: AsyncSession, reset: bool = False) -> int:
-    existing = await db.scalar(select(func.count()).select_from(TransitDeclaration)) or 0
-    if existing and not reset:
-        return existing
-    if reset:
-        await db.execute(delete(TransitDeclaration).where(TransitDeclaration.source_system == "MOCK"))
-    rng = random.Random(20260811)
     today = date.today()
+    source_version = f"DEMO_V2_{today.year}"
+    count = 10_000
+    existing = await db.scalar(select(func.count()).select_from(TransitDeclaration).where(TransitDeclaration.source_system == source_version)) or 0
+    if existing >= count and not reset:
+        return existing
+    await db.execute(delete(TransitDeclaration).where(or_(TransitDeclaration.source_system == "MOCK", TransitDeclaration.source_system.like("DEMO_V2%"))))
+    rng = random.Random(20260811)
     start = date(today.year, 1, 1)
-    pairs = [(r["origin"], r["destination"], r["entry"], r["exit"], weight) for r, weight in zip(ROUTES, [42, 27, 18, 13], strict=True)]
-    count = 640
+    pairs = [(r["origin"], r["destination"], r["entry"], r["exit"], max(5, 24 - index)) for index, r in enumerate(ROUTES)]
+    batch: list[dict] = []
     for i in range(count):
         origin, destination, entry, exit, _ = rng.choices(pairs, weights=[p[4] for p in pairs], k=1)[0]
         day = start + timedelta(days=rng.randint(0, max(0, (today - start).days)))
         entry_dt = datetime.combine(day, time(rng.randint(0, 23), rng.randint(0, 59)), tzinfo=UTC)
-        duration = rng.randint(7 * 60, 48 * 60)
-        db.add(TransitDeclaration(
-            declaration_no=f"MOCK-{today.year}-{i + 1:06d}", source_system="MOCK", declaration_date=day,
-            origin_country_code=origin, destination_country_code=destination, entry_post_code=entry, exit_post_code=exit,
-            entry_time=entry_dt, exit_time=entry_dt + timedelta(minutes=duration), vehicle_no=f"TEST-{rng.randint(1000,9999)}",
-            carrier_name="Demo tashuvchi", state="COMPLETED",
-        ))
-    await db.flush()
+        duration = rng.randint(2 * 60, 48 * 60)
+        batch.append({
+            "declaration_no": f"DEMO2-{today.year}-{i + 1:06d}", "source_system": source_version, "declaration_date": day,
+            "origin_country_code": origin, "destination_country_code": destination, "entry_post_code": entry, "exit_post_code": exit,
+            "entry_time": entry_dt, "exit_time": entry_dt + timedelta(minutes=duration), "vehicle_no": f"TEST-{rng.randint(1000,9999)}",
+            "carrier_name": "Demo tashuvchi", "state": "COMPLETED",
+        })
+        if len(batch) == 500:
+            await db.execute(insert(TransitDeclaration), batch)
+            batch.clear()
+    if batch:
+        await db.execute(insert(TransitDeclaration), batch)
     return count
 
 
@@ -116,15 +192,23 @@ async def seed_all(db: AsyncSession) -> None:
     email = settings.admin_initial_email.lower()
     if not await db.scalar(select(User.id).where(User.email == email)):
         db.add(User(email=email, password_hash=hash_password(settings.admin_initial_password), role="ADMIN"))
-    existing_codes = set((await db.scalars(select(CustomsPost.post_code))).all())
+    existing_posts = {post.post_code: post for post in (await db.scalars(select(CustomsPost))).all()}
     for code, name, post_type, country in POSTS:
-        if code in existing_codes:
-            continue
+        post = existing_posts.get(code)
         lat, lng = COORDINATES.get(code, (None, None))
-        post = CustomsPost(post_code=code, post_name=name, post_type=post_type, neighbor_country_code=country, latitude=lat, longitude=lng, location_verified=lat is not None)
-        if lat is not None:
+        is_new = post is None
+        if is_new:
+            post = CustomsPost(post_code=code)
+            db.add(post)
+            post.is_active = True
+        post.post_name = _official_post_name(code, name, post_type)
+        post.post_type = post_type
+        post.neighbor_country_code = country
+        if lat is not None and (is_new or post.latitude is None or post.longitude is None):
+            post.latitude = lat
+            post.longitude = lng
+            post.location_verified = True
             post.location = ST_SetSRID(ST_MakePoint(lng, lat), 4326)
-        db.add(post)
     await db.flush()
     existing_gateways = set((await db.scalars(select(CountryGateway.name))).all())
     for country, name, gateway_type, lat, lng, neighbor, notes in GATEWAYS:
@@ -135,22 +219,38 @@ async def seed_all(db: AsyncSession) -> None:
         gateway.location = ST_SetSRID(ST_MakePoint(lng, lat), 4326)
         db.add(gateway)
     await db.flush()
-    existing_corridors = set((await db.scalars(select(Corridor.code))).all())
-    for route in ROUTES:
-        if route["code"] in existing_corridors:
-            continue
+    existing_corridors = {corridor.code: corridor for corridor in (await db.scalars(select(Corridor))).unique().all()}
+    for priority, route in enumerate(ROUTES, start=1):
         geometry = {"type": "LineString", "coordinates": route["coords"]}
-        corridor = Corridor(code=route["code"], name=route["name"], origin_country_code=route["origin"], destination_country_code=route["destination"],
-            entry_post_code=route["entry"], exit_post_code=route["exit"], status="ACTIVE", color=route["color"], geometry_source="router",
-            routing_provider="osrm-seed-cache", geometry=ST_GeomFromGeoJSON(json.dumps(geometry)), distance_meters=route["distance"], duration_seconds=route["duration"], is_active=True)
-        db.add(corridor)
+        corridor = existing_corridors.get(route["code"])
+        if corridor is not None and corridor.geometry_source == "verified-osrm-seed-v2":
+            continue
+        if corridor is None:
+            corridor = Corridor(code=route["code"])
+            db.add(corridor)
+        corridor.name = route["name"]
+        corridor.origin_country_code = route["origin"]
+        corridor.destination_country_code = route["destination"]
+        corridor.entry_post_code = route["entry"]
+        corridor.exit_post_code = route["exit"]
+        corridor.status = "ACTIVE"
+        corridor.color = route["color"]
+        corridor.geometry_source = "verified-osrm-seed-v2"
+        corridor.routing_provider = "osrm-seed-cache"
+        corridor.geometry = ST_GeomFromGeoJSON(json.dumps(geometry))
+        corridor.distance_meters = route["distance"]
+        corridor.duration_seconds = route["duration"]
+        corridor.route_needs_review = False
+        corridor.priority = priority
+        corridor.is_active = True
+        corridor.waypoints.clear()
         await db.flush()
         for seq, coord in enumerate(route["waypoints"]):
             waypoint_type = "ENTRY_POST" if seq == 0 else "EXIT_POST" if seq == len(route["waypoints"]) - 1 else "VIA"
-            wp = CorridorWaypoint(corridor_id=corridor.id, sequence_no=seq, waypoint_type=waypoint_type, latitude=coord[1], longitude=coord[0],
+            wp = CorridorWaypoint(sequence_no=seq, waypoint_type=waypoint_type, latitude=coord[1], longitude=coord[0],
                 post_code=route["entry"] if seq == 0 else route["exit"] if seq == len(route["waypoints"]) - 1 else None)
             wp.location = ST_SetSRID(ST_MakePoint(coord[0], coord[1]), 4326)
-            db.add(wp)
+            corridor.waypoints.append(wp)
     if settings.enable_demo_seed:
         await seed_demo_declarations(db)
     await db.commit()

@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import structlog
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
@@ -80,6 +80,11 @@ app.include_router(api_router, prefix="/api")
 
 
 frontend_dist = (Path(__file__).resolve().parent.parent / "frontend_dist").resolve()
+
+
+@app.head("/", include_in_schema=False)
+async def head_root() -> Response:
+    return Response(status_code=200)
 
 
 @app.get("/{full_path:path}", include_in_schema=False)
