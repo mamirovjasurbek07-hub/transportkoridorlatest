@@ -116,6 +116,7 @@ export function YandexRouteBuilderMap({ apiKey, waypoints, geometry, posts = [],
   const mapRef = useRef<AnyObject | null>(null)
   const ymapsRef = useRef<AnyObject | null>(null)
   const objectsRef = useRef<AnyObject | null>(null)
+  const didInitialFitRef = useRef(false)
   const onAddRef = useRef(onAdd); const onMoveRef = useRef(onMove)
   const onPostSelectRef = useRef(onPostSelect)
   onAddRef.current = onAdd; onMoveRef.current = onMove
@@ -143,7 +144,11 @@ export function YandexRouteBuilderMap({ apiKey, waypoints, geometry, posts = [],
       const marker = new ymaps.Placemark([post.latitude, post.longitude], { hintContent: `${post.post_code} · ${post.post_name}`, balloonContentHeader: `${post.post_code} · ${post.post_name}`, balloonContentBody: `${post.post_type} · corridor roli uchun markerni bosing` }, { preset, zIndex: 300 })
       marker.events.add('click', () => onPostSelectRef.current?.(post)); objects.add(marker)
     })
-    if (geometry) objects.add(new ymaps.Polyline(geometry.coordinates.map(([lng, lat]) => [lat, lng]), {}, { strokeColor: '#67e8f9', strokeWidth: 5, strokeOpacity: .96 }))
+    if (geometry) {
+      const routeLine = new ymaps.Polyline(geometry.coordinates.map(([lng, lat]) => [lat, lng]), { hintContent: "Yo‘l ustiga bosib oraliq nuqta qo‘shing" }, { strokeColor: '#67e8f9', strokeWidth: 6, strokeOpacity: .96, cursor: 'crosshair' })
+      routeLine.events.add('click', (event: AnyObject) => { const [lat, lng] = event.get('coords'); onAddRef.current(lat, lng) })
+      objects.add(routeLine)
+    }
     waypoints.forEach((point, index) => {
       const fixed = Boolean(point.post_code)
       const preset = point.waypoint_type === 'ENTRY_POST' || point.waypoint_type === 'EXIT_POST' ? 'islands#redCircleIcon' : point.waypoint_type.includes('GATEWAY') ? 'islands#darkBlueCircleIcon' : 'islands#blueCircleIcon'
@@ -151,7 +156,11 @@ export function YandexRouteBuilderMap({ apiKey, waypoints, geometry, posts = [],
       marker.events.add('dragend', () => { const [lat, lng] = marker.geometry.getCoordinates(); onMoveRef.current(index, lat, lng) }); objects.add(marker)
     })
     const points = geometry?.coordinates.map(([lng, lat]) => [lat, lng]) || waypoints.map((w) => [w.latitude, w.longitude])
-    if (points.length > 1) { const lats = points.map((p) => p[0]); const lngs = points.map((p) => p[1]); mapRef.current?.setBounds([[Math.min(...lats), Math.min(...lngs)], [Math.max(...lats), Math.max(...lngs)]], { checkZoomRange: true, zoomMargin: 55 }) }
+    if (!didInitialFitRef.current && points.length > 1) {
+      const lats = points.map((p) => p[0]); const lngs = points.map((p) => p[1])
+      mapRef.current?.setBounds([[Math.min(...lats), Math.min(...lngs)], [Math.max(...lats), Math.max(...lngs)]], { checkZoomRange: true, zoomMargin: 55 })
+      didInitialFitRef.current = true
+    }
   }, [geometry, posts, ready, waypoints])
   return <div ref={container} className="route-builder-map yandex-map" aria-label="Yandex xaritasida corridor nuqtalarini tahrirlash" />
 }
