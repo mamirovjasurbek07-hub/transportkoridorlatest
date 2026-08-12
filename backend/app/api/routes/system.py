@@ -21,7 +21,7 @@ async def health(db: AsyncSession = Depends(get_db)) -> dict:
 @router.get("/map/config", tags=["map"])
 async def map_config() -> dict:
     yandex_ready = settings.map_provider == "yandex" and bool(settings.yandex_maps_api_key.strip())
-    routing_provider = "yandex" if settings.routing_provider.lower() == "yandex" and settings.yandex_router_api_key.strip() else "osrm"
+    routing_provider = "yandex" if settings.yandex_router_enabled and settings.routing_provider.lower() == "yandex" and settings.yandex_router_api_key.strip() else "osrm"
     return {
         "provider": "yandex" if yandex_ready else "osm",
         "requested_provider": settings.map_provider,
