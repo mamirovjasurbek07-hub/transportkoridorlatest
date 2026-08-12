@@ -1,13 +1,14 @@
 import time
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import structlog
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import ORJSONResponse
+from fastapi.responses import FileResponse, ORJSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -78,6 +79,17 @@ async def unhandled_error(request: Request, exc: Exception):
 app.include_router(api_router, prefix="/api")
 
 
-@app.get("/")
-async def root() -> dict:
+frontend_dist = (Path(__file__).resolve().parent.parent / "frontend_dist").resolve()
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+async def frontend(full_path: str):
+    if full_path.startswith("api/"):
+        raise HTTPException(status_code=404, detail="Endpoint topilmadi")
+    requested = (frontend_dist / full_path).resolve()
+    if frontend_dist in requested.parents and requested.is_file():
+        return FileResponse(requested)
+    index = frontend_dist / "index.html"
+    if index.is_file():
+        return FileResponse(index)
     return {"name": settings.app_name, "api": "/api/health"}

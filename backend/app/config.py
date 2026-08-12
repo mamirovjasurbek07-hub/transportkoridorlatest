@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     app_name: str = "Tranzit transport yo'laklari"
     app_env: Literal["development", "test", "production"] = "development"
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/transit_map"
+    database_ssl: bool = False
     secret_key: str = "development-only-secret-change-before-production"
     admin_initial_email: str = "admin@example.local"
     admin_initial_password: str = "CHANGE_ME_NOW"
@@ -21,6 +22,7 @@ class Settings(BaseSettings):
     routing_timeout_seconds: int = 15
     enable_demo_seed: bool = True
     cookie_secure: bool = False
+    cookie_samesite: Literal["lax", "strict", "none"] = "lax"
     access_token_minutes: int = 480
 
     @field_validator("database_url")
@@ -43,4 +45,3 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
-
