@@ -1,10 +1,15 @@
 export type FeatureCollection = GeoJSON.FeatureCollection<GeoJSON.Geometry, Record<string, unknown>>
 
 export interface Country {
+  numeric: string
   alpha2: string
   alpha3: string
   name: string
   flag: string
+  latitude: number | null
+  longitude: number | null
+  has_origin_route: boolean
+  has_destination_route: boolean
 }
 
 export interface CustomsPost {
@@ -77,4 +82,3 @@ export interface Filters {
   exit: string
   corridor: string
 }
-
