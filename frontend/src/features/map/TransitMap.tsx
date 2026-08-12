@@ -33,9 +33,9 @@ export default function TransitMap({ posts = empty, corridors = empty, selectedI
     map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right')
     map.on('load', () => {
       map.addSource('corridors', { type: 'geojson', data: empty })
-      map.addLayer({ id: 'corridor-glow', type: 'line', source: 'corridors', paint: { 'line-color': ['coalesce', ['get', 'color'], '#22d3ee'], 'line-width': ['interpolate', ['exponential', 0.5], ['get', 'declaration_count'], 1, 8, 700, 30], 'line-blur': 10, 'line-opacity': 0.28 } })
-      map.addLayer({ id: 'corridor-core', type: 'line', source: 'corridors', paint: { 'line-color': ['coalesce', ['get', 'color'], '#22d3ee'], 'line-width': ['interpolate', ['exponential', 0.5], ['get', 'declaration_count'], 1, 2, 700, 16], 'line-opacity': 0.92 } })
-      map.addLayer({ id: 'corridor-flow', type: 'line', source: 'corridors', paint: { 'line-color': '#e8fdff', 'line-width': ['interpolate', ['linear'], ['get', 'declaration_count'], 1, 0.8, 700, 3], 'line-opacity': 0.9, 'line-dasharray': [0.8, 2.3] } })
+      map.addLayer({ id: 'corridor-glow', type: 'line', source: 'corridors', paint: { 'line-color': ['coalesce', ['get', 'color'], '#22d3ee'], 'line-width': ['interpolate', ['linear'], ['get', 'declaration_count'], 1, 7, 100, 13, 1000, 25], 'line-blur': 8, 'line-opacity': 0.46 } })
+      map.addLayer({ id: 'corridor-core', type: 'line', source: 'corridors', paint: { 'line-color': ['coalesce', ['get', 'color'], '#22d3ee'], 'line-width': ['interpolate', ['linear'], ['get', 'declaration_count'], 1, 2.5, 100, 5, 1000, 12], 'line-opacity': 1 } })
+      map.addLayer({ id: 'corridor-flow', type: 'line', source: 'corridors', paint: { 'line-color': '#f5feff', 'line-width': ['interpolate', ['linear'], ['get', 'declaration_count'], 1, 1, 1000, 2.8], 'line-opacity': 0.96, 'line-dasharray': [0.8, 2.3] } })
       map.addLayer({ id: 'selected-corridor', type: 'line', source: 'corridors', filter: ['==', ['get', 'id'], ''], paint: { 'line-color': '#ffffff', 'line-width': 4, 'line-opacity': 0.95 } })
       map.addSource('posts', { type: 'geojson', data: empty, cluster: true, clusterRadius: 48, clusterMaxZoom: 8 })
       map.addLayer({ id: 'post-clusters', type: 'circle', source: 'posts', filter: ['has', 'point_count'], paint: { 'circle-color': '#102f4f', 'circle-radius': ['step', ['get', 'point_count'], 16, 10, 21, 30, 27], 'circle-stroke-width': 2, 'circle-stroke-color': '#38bdf8' } })
@@ -44,8 +44,8 @@ export default function TransitMap({ posts = empty, corridors = empty, selectedI
 
       const corridorClick = (event: MapLayerMouseEvent) => onCorridorSelect?.((event.features?.[0]?.properties || null) as Record<string, unknown> | null)
       map.on('click', 'corridor-core', corridorClick)
-      map.on('mouseenter', 'corridor-core', () => { map.getCanvas().style.cursor = 'pointer'; map.setPaintProperty('corridor-glow', 'line-opacity', 0.55) })
-      map.on('mouseleave', 'corridor-core', () => { map.getCanvas().style.cursor = ''; map.setPaintProperty('corridor-glow', 'line-opacity', 0.28) })
+      map.on('mouseenter', 'corridor-core', () => { map.getCanvas().style.cursor = 'pointer'; map.setPaintProperty('corridor-glow', 'line-opacity', 0.7) })
+      map.on('mouseleave', 'corridor-core', () => { map.getCanvas().style.cursor = ''; map.setPaintProperty('corridor-glow', 'line-opacity', 0.46) })
       map.on('click', 'post-points', (event) => {
         const feature = event.features?.[0]
         if (!feature || feature.geometry.type !== 'Point') return

@@ -11,8 +11,7 @@ export function getMapStyle(): string | StyleSpecification {
     },
     layers: [
       { id: 'background', type: 'background', paint: { 'background-color': '#07111f' } },
-      { id: 'osm', type: 'raster', source: 'osm', paint: { 'raster-saturation': -0.9, 'raster-brightness-max': 0.45, 'raster-contrast': 0.35, 'raster-opacity': 0.72 } },
+      { id: 'osm', type: 'raster', source: 'osm', paint: { 'raster-saturation': -0.35, 'raster-brightness-min': 0.08, 'raster-brightness-max': 0.82, 'raster-contrast': 0.12, 'raster-opacity': 0.96 } },
     ],
   }
 }
-
