@@ -51,7 +51,8 @@ export default function TransitMap({ posts = empty, corridors = empty, selectedI
         if (!feature || feature.geometry.type !== 'Point') return
         const p = feature.properties || {}
         popupRef.current?.remove()
-        popupRef.current = new maplibregl.Popup({ offset: 12, className: 'transit-popup' }).setLngLat(feature.geometry.coordinates as [number, number]).setHTML(`<div class="map-popup"><small>${p.post_type || ''}</small><strong>${p.post_code} · ${p.post_name}</strong><span>Kirish: ${p.entry_count || 0} · Chiqish: ${p.exit_count || 0}</span><b>Jami oqim: ${p.total_flow || 0}</b></div>`).addTo(map)
+        const permissions = [p.allow_passenger_vehicles ? 'Yengil transport' : '', p.allow_cargo_vehicles ? 'Yuk transporti' : ''].filter(Boolean).join(' · ')
+        popupRef.current = new maplibregl.Popup({ offset: 12, className: 'transit-popup' }).setLngLat(feature.geometry.coordinates as [number, number]).setHTML(`<div class="map-popup"><small>${p.post_type || ''}</small><strong>${p.post_code} · ${p.post_name}</strong><span>Kirish: ${p.entry_count || 0} · Chiqish: ${p.exit_count || 0}</span>${p.post_type === 'CHBP' ? `<span>Ruxsat: ${permissions || 'Belgilanmagan'}</span>` : ''}<b>Jami oqim: ${p.total_flow || 0}</b></div>`).addTo(map)
       })
       map.on('click', 'post-clusters', async (event) => {
         const feature = event.features?.[0]
