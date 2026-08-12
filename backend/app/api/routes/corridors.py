@@ -4,7 +4,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from geoalchemy2.functions import ST_AsGeoJSON, ST_GeomFromGeoJSON, ST_SetSRID, ST_MakePoint
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -51,7 +51,8 @@ async def list_corridors(active_only: bool = True, db: AsyncSession = Depends(ge
 
 @router.post("/preview", dependencies=[Depends(csrf_protect)])
 async def preview_route(payload: RoutePreviewRequest, db: AsyncSession = Depends(get_db), _: User = Depends(admin_user)) -> dict:
-    result = await RoutingService(db).route([w.model_dump() for w in payload.waypoints], payload.force, payload.routing_profile)
+    waypoint_data = await normalized_waypoints(db, payload.waypoints)
+    result = await RoutingService(db).route(waypoint_data, payload.force, payload.routing_profile)
     if result.available:
         await db.commit()
     else:
@@ -79,31 +80,60 @@ def apply_route(corridor: Corridor, result) -> None:
         corridor.status = "REVIEW"
 
 
+async def normalized_waypoints(db: AsyncSession, waypoints) -> list[dict]:
+    post_codes = {waypoint.post_code for waypoint in waypoints if waypoint.post_code}
+    post_by_code = {}
+    if post_codes:
+        rows = (await db.scalars(select(CustomsPost).where(CustomsPost.post_code.in_(post_codes), CustomsPost.is_active.is_(True)))).all()
+        post_by_code = {post.post_code: post for post in rows}
+        if len(post_by_code) != len(post_codes):
+            raise HTTPException(status_code=422, detail="Waypointga bog'langan post topilmadi yoki nofaol")
+    result: list[dict] = []
+    for waypoint in sorted(waypoints, key=lambda item: item.sequence_no):
+        data = waypoint.model_dump()
+        if waypoint.post_code:
+            post = post_by_code[waypoint.post_code]
+            if post.latitude is None or post.longitude is None:
+                raise HTTPException(status_code=422, detail=f"{post.post_code} post koordinatasi belgilanmagan")
+            data["latitude"] = post.latitude
+            data["longitude"] = post.longitude
+            data["label"] = data.get("label") or post.post_name
+        result.append(data)
+    for sequence_no, item in enumerate(result):
+        item["sequence_no"] = sequence_no
+    return result
+
+
 async def validate_posts(db: AsyncSession, entry: str, exit: str) -> None:
-    count = await db.scalar(select(func.count()).select_from(CustomsPost).where(CustomsPost.post_code.in_([entry, exit])))
+    posts = (await db.scalars(select(CustomsPost).where(CustomsPost.post_code.in_([entry, exit]), CustomsPost.is_active.is_(True)))).all()
     expected = 1 if entry == exit else 2
-    if count != expected:
+    if len(posts) != expected:
         raise HTTPException(status_code=422, detail="Kirish yoki chiqish posti mavjud emas")
+    if any(post.post_type != "CHBP" for post in posts):
+        raise HTTPException(status_code=422, detail="Kirish va chiqish roli uchun CHBP chegara posti kerak")
+    if any(post.latitude is None or post.longitude is None for post in posts):
+        raise HTTPException(status_code=422, detail="Kirish yoki chiqish postining koordinatasi belgilanmagan")
 
 
 @router.post("", status_code=201, dependencies=[Depends(csrf_protect)])
 async def create_corridor(payload: CorridorCreate, request: Request, db: AsyncSession = Depends(get_db), user: User = Depends(admin_user)) -> dict:
     await validate_posts(db, payload.entry_post_code, payload.exit_post_code)
+    waypoint_data = await normalized_waypoints(db, payload.waypoints)
     if await db.scalar(select(Corridor.id).where(Corridor.code == payload.code)):
         raise HTTPException(status_code=409, detail="Bu korridor kodi mavjud")
     values = payload.model_dump(exclude={"waypoints", "build_route"})
     corridor = Corridor(**values)
     db.add(corridor)
     await db.flush()
-    for w in payload.waypoints:
-        data = w.model_dump()
+    for data in waypoint_data:
+        data = dict(data)
         if data["gateway_id"]:
             data["gateway_id"] = uuid.UUID(data["gateway_id"])
         point = CorridorWaypoint(corridor_id=corridor.id, **data)
         point.location = ST_SetSRID(ST_MakePoint(point.longitude, point.latitude), 4326)
         db.add(point)
     if payload.build_route:
-        result = await RoutingService(db).route([w.model_dump() for w in payload.waypoints], profile=payload.routing_profile)
+        result = await RoutingService(db).route(waypoint_data, profile=payload.routing_profile)
         apply_route(corridor, result)
     await add_audit(db, request, user, "CREATE", "corridor", str(corridor.id), after={"code": corridor.code, "name": corridor.name})
     await db.commit()
@@ -132,18 +162,19 @@ async def update_corridor(corridor_id: str, payload: CorridorUpdate, request: Re
         exit_waypoint = next(waypoint for waypoint in payload.waypoints if waypoint.waypoint_type == "EXIT_POST")
         if entry_waypoint.post_code != next_entry or exit_waypoint.post_code != next_exit:
             raise HTTPException(status_code=422, detail="Waypoint postlari tanlangan kirish/chiqish postlariga mos emas")
+        waypoint_data = await normalized_waypoints(db, payload.waypoints)
         for existing in list(corridor.waypoints):
             await db.delete(existing)
         await db.flush()
-        for w in payload.waypoints:
-            waypoint_data = w.model_dump()
-            if waypoint_data["gateway_id"]:
-                waypoint_data["gateway_id"] = uuid.UUID(waypoint_data["gateway_id"])
-            point = CorridorWaypoint(corridor_id=corridor.id, **waypoint_data)
+        for waypoint in waypoint_data:
+            item = dict(waypoint)
+            if item["gateway_id"]:
+                item["gateway_id"] = uuid.UUID(item["gateway_id"])
+            point = CorridorWaypoint(corridor_id=corridor.id, **item)
             point.location = ST_SetSRID(ST_MakePoint(point.longitude, point.latitude), 4326)
             db.add(point)
         if payload.rebuild_route:
-            result = await RoutingService(db).route([w.model_dump() for w in payload.waypoints], force=True, profile=corridor.routing_profile)
+            result = await RoutingService(db).route(waypoint_data, force=True, profile=corridor.routing_profile)
             apply_route(corridor, result)
     await add_audit(db, request, user, "UPDATE", "corridor", str(corridor.id), before=before, after=changes)
     await db.commit()

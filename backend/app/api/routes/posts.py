@@ -11,7 +11,7 @@ from sqlalchemy.orm import selectinload
 
 from app.database import get_db
 from app.dependencies import admin_user, csrf_protect
-from app.models import Corridor, CustomsPost, User
+from app.models import Corridor, CorridorWaypoint, CustomsPost, User
 from app.schemas import PostCreate, PostUpdate
 from app.audit import add_audit
 from app.routing import RoutingService
@@ -36,13 +36,16 @@ async def rebuild_post_corridors(db: AsyncSession, post: CustomsPost) -> tuple[i
         .options(selectinload(Corridor.waypoints))
         .where(
             Corridor.is_active.is_(True),
-            or_(Corridor.entry_post_code == post.post_code, Corridor.exit_post_code == post.post_code),
+            or_(
+                Corridor.entry_post_code == post.post_code,
+                Corridor.exit_post_code == post.post_code,
+                Corridor.waypoints.any(CorridorWaypoint.post_code == post.post_code),
+            ),
         )
     )).unique().all()
     rebuilt = 0
     review = 0
     routing = RoutingService(db)
-    routing_available = True
     for corridor in corridors:
         matching_waypoints = [point for point in corridor.waypoints if point.post_code == post.post_code]
         if post.latitude is None or post.longitude is None or not matching_waypoints:
@@ -59,19 +62,18 @@ async def rebuild_post_corridors(db: AsyncSession, post: CustomsPost) -> tuple[i
         result = await routing.route([
             {"latitude": point.latitude, "longitude": point.longitude}
             for point in ordered
-        ]) if routing_available else None
+        ], force=True, profile=corridor.routing_profile)
         if result and result.available and result.geometry:
             corridor.geometry = ST_GeomFromGeoJSON(json.dumps(result.geometry))
             corridor.geometry_hash = hashlib.sha256(json.dumps(result.geometry, sort_keys=True).encode()).hexdigest()
             corridor.distance_meters = result.distance_meters
             corridor.duration_seconds = result.duration_seconds
-            corridor.geometry_source = "post-update-osrm"
-            corridor.routing_provider = "osrm"
+            corridor.geometry_source = f"post-update-{result.provider}"
+            corridor.routing_provider = result.provider
             corridor.route_needs_review = False
             corridor.status = "ACTIVE"
             rebuilt += 1
         else:
-            routing_available = False
             corridor.geometry = None
             corridor.route_needs_review = True
             corridor.status = "REVIEW"
