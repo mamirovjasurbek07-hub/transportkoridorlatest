@@ -34,7 +34,7 @@ async def login(request: Request, payload: LoginRequest, response: Response, db:
         create_access_token(str(user.id), user.role),
         httponly=True,
         secure=settings.cookie_secure,
-        samesite="lax",
+        samesite=settings.cookie_samesite,
         max_age=settings.access_token_minutes * 60,
         path="/",
     )
@@ -43,7 +43,7 @@ async def login(request: Request, payload: LoginRequest, response: Response, db:
         csrf,
         httponly=False,
         secure=settings.cookie_secure,
-        samesite="lax",
+        samesite=settings.cookie_samesite,
         max_age=settings.access_token_minutes * 60,
         path="/",
     )
@@ -64,7 +64,7 @@ async def me(response: Response, user: User = Depends(current_user)) -> dict:
         csrf,
         httponly=False,
         secure=settings.cookie_secure,
-        samesite="lax",
+        samesite=settings.cookie_samesite,
         max_age=settings.access_token_minutes * 60,
         path="/",
     )
