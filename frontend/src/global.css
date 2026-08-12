@@ -85,6 +85,7 @@ label small { display: block; margin-top: 6px; color: #5f7c91; font-size: 10px; 
 .filter-actions .primary { min-width: 135px; }
 .country-options>button.country-clear-option{grid-template-columns:1fr 18px}
 .country-options>button:not(.country-clear-option){grid-template-columns:24px 1fr 18px}
+.auto-route-state{margin-right:auto;display:inline-flex;align-items:center;gap:6px;max-width:190px;font-size:9px;font-weight:800;letter-spacing:.03em;color:#7f9bad}.auto-route-state:before{content:'';flex:0 0 auto;width:7px;height:7px;border-radius:50%;background:#7890a0}.auto-route-state.ready{color:#56d8be}.auto-route-state.ready:before{background:#34d399;box-shadow:0 0 8px rgba(52,211,153,.65)}.auto-route-state.loading{color:#67d8ec}.auto-route-state.loading:before{background:#22d3ee;animation:routePulse 1s infinite}.auto-route-state.stale{color:#f3b95f}.auto-route-state.stale:before{background:#f59e0b}@keyframes routePulse{50%{opacity:.3;transform:scale(.75)}}
 .advanced-filters { grid-column: 1/-1; }
 .advanced-filters summary { width: fit-content; color: #6fcbe0; font-size: 11px; font-weight: 700; cursor: pointer; }
 .advanced-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 13px; margin-top: 12px; }
