@@ -11,7 +11,7 @@ FastAPI API ── SQLAlchemy async ── PostgreSQL + PostGIS
         └── RoutingService ── OSRM       └── route_cache / geometry
 ```
 
-Public analytics deklaratsiya darajasidagi nuqtalarni frontendga yubormaydi. SQL `GROUP BY entry_post_code, exit_post_code` orqali oqimni jamlaydi, mos faol corridorni topadi va faqat saqlangan PostGIS LineString geometriyasini GeoJSON bilan qaytaradi.
+Public analytics deklaratsiya darajasidagi nuqtalarni frontendga yubormaydi. SQL `GROUP BY origin_country_code, destination_country_code, entry_post_code, exit_post_code` orqali oqimni jamlaydi, mos faol corridorni topadi va faqat saqlangan PostGIS LineString geometriyasini GeoJSON bilan qaytaradi. Shu sabab bir davlat juftligidagi bir nechta kirish/chiqish post yo‘laklari bir vaqtda alohida rangda ko‘rsatiladi.
 
 `RoutingService` provider/profile/rounded coordinates/order asosida SHA-256 cache-key yaratadi. Public so‘rov routerga chiqmaydi. Faqat admin preview/rebuild tashqi routerdan foydalanadi. Route topilmasa straight-line fallback yo‘q.
 
@@ -136,4 +136,4 @@ Docker image frontendni build qiladi, FastAPI fayllari bilan birlashtiradi va co
 
 `ENABLE_DEMO_SEED=true` seedni idempotent ishlatadi. Real ma’lumotga o‘tganda uni `false` qiling. Production’da `COOKIE_SECURE=true` va `COOKIE_SAMESITE=lax` bo‘lishi kerak.
 
-Demo seed `DEMO_V2` manbasi bilan 10 000 ta deklaratsiya va 12 ta mamlakat juftligini yaratadi. Oldingi `MOCK` yozuvlari yangi versiya birinchi marta ishga tushganda almashtiriladi. `/api/countries` Excel ma’lumotnomasidagi 252 ta yozuvni numeric, alpha-2, alpha-3 va xarita markaz koordinatalari bilan qaytaradi; mamlakat markazi routing waypointi sifatida ishlatilmaydi.
+Demo seed `DEMO_V3` manbasi bilan 10 000 ta deklaratsiya va 45 ta shablon yo‘lak yaratadi. Ular Qirg‘iziston–Afg‘onistonning 4 ta post kombinatsiyasi, Xitoydan g‘arb/janub tranziti, Rossiya, Kavkaz, Janubiy Osiyo hamda O‘zbekiston–Xitoy/Yevropa/Turkiya/Afg‘oniston yo‘nalishlarini qamrab oladi. Oldingi `MOCK` va `DEMO_V2` yozuvlari yangi versiya birinchi marta ishga tushganda almashtiriladi. `/api/countries` Excel ma’lumotnomasidagi 252 ta yozuvni numeric, alpha-2, alpha-3 va xarita markaz koordinatalari bilan qaytaradi; mamlakat markazi routing waypointi sifatida ishlatilmaydi.
