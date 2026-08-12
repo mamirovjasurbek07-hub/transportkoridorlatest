@@ -22,6 +22,8 @@ export interface CustomsPost {
   latitude?: number
   longitude?: number
   location_verified: boolean
+  allow_passenger_vehicles: boolean
+  allow_cargo_vehicles: boolean
   is_active: boolean
 }
 
