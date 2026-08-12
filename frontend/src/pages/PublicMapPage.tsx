@@ -38,7 +38,7 @@ export default function PublicMapPage() {
         <section className="map-section"><div className="map-section-title"><div><p className="eyebrow">TRANZIT OQIMLARI XARITASI</p><h2>Yo'nalishlar real avtomobil yo'llari bo'ylab</h2></div><a className="btn ghost compact" href={`${API_BASE}/analytics/export.csv?date_from=${filters.date_from}&date_to=${filters.date_to}`}><Download size={15}/> CSV</a></div><CorridorPicker corridors={query.data?.corridors} selectedId={String(selected?.id || '')} select={selectCorridor}/><div className="map-layout"><TransitMap posts={query.data?.posts} corridors={query.data?.corridors} loading={query.isFetching} selectedId={String(selected?.id || '')} onCorridorSelect={selectCorridor}/><StatsPanel data={query.data} collapsed={statsCollapsed} toggle={() => setStatsCollapsed((v) => !v)}/></div>{query.isError && <div className="inline-error">Ma'lumotlarni yuklab bo'lmadi. Backend manzili va tarmoqni tekshiring.</div>}{!query.isLoading && !query.data?.corridors.features.length && <div className="no-data">Tanlangan filtrlar bo'yicha xaritada ko'rsatiladigan tasdiqlangan route yo'q.</div>}</section>
       </main>
       <CorridorDrawer corridor={selected} close={() => setSelected(null)}/>
-      <footer className="public-footer"><span>© {new Date().getFullYear()} Tranzit geoanalitika</span><span>Map data © OpenStreetMap contributors</span></footer>
+      <footer className="public-footer"><span>© {new Date().getFullYear()} Tranzit geoanalitika</span><span>Xarita: Yandex Maps · chegara: geoBoundaries/OpenStreetMap · fallback: OpenStreetMap</span></footer>
     </div>
   )
 }
