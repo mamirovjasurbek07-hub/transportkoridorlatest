@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from geoalchemy2.functions import ST_AsGeoJSON
-from sqlalchemy import and_, case, extract, func, select
+from sqlalchemy import extract, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -55,13 +55,20 @@ async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, or
     transit_seconds = extract("epoch", TransitDeclaration.exit_time - TransitDeclaration.entry_time)
     grouped = (await db.execute(
         select(
+            TransitDeclaration.origin_country_code,
+            TransitDeclaration.destination_country_code,
             TransitDeclaration.entry_post_code,
             TransitDeclaration.exit_post_code,
             func.count().label("count"),
             func.avg(transit_seconds).label("avg_seconds"),
             func.min(transit_seconds).label("min_seconds"),
             func.max(transit_seconds).label("max_seconds"),
-        ).where(*filters).group_by(TransitDeclaration.entry_post_code, TransitDeclaration.exit_post_code)
+        ).where(*filters).group_by(
+            TransitDeclaration.origin_country_code,
+            TransitDeclaration.destination_country_code,
+            TransitDeclaration.entry_post_code,
+            TransitDeclaration.exit_post_code,
+        )
     )).all()
     total = sum(row.count for row in grouped)
     corridor_query = select(Corridor).where(Corridor.is_active.is_(True))
@@ -72,13 +79,22 @@ async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, or
     if destination:
         corridor_query = corridor_query.where(Corridor.destination_country_code == destination.upper())
     corridors = (await db.scalars(corridor_query)).all()
-    corridor_by_pair: dict[tuple[str, str], Corridor] = {}
+    corridor_by_pair: dict[tuple[str | None, str | None, str, str], Corridor] = {}
     for c in sorted(corridors, key=lambda item: item.priority):
-        corridor_by_pair.setdefault((c.entry_post_code, c.exit_post_code), c)
+        corridor_by_pair.setdefault(
+            (c.origin_country_code, c.destination_country_code, c.entry_post_code, c.exit_post_code), c
+        )
+    post_rows = (await db.scalars(select(CustomsPost).where(CustomsPost.is_active.is_(True), CustomsPost.latitude.is_not(None)))).all()
+    post_names = {post.post_code: post.post_name for post in post_rows}
     features = []
     unavailable = []
     for row in grouped:
-        corridor = corridor_by_pair.get((row.entry_post_code, row.exit_post_code))
+        corridor = corridor_by_pair.get((
+            row.origin_country_code,
+            row.destination_country_code,
+            row.entry_post_code,
+            row.exit_post_code,
+        ))
         geometry = None
         if corridor and corridor.geometry is not None:
             raw = await db.scalar(select(ST_AsGeoJSON(Corridor.geometry)).where(Corridor.id == corridor.id))
@@ -87,10 +103,12 @@ async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, or
             "id": str(corridor.id) if corridor else f"{row.entry_post_code}-{row.exit_post_code}",
             "code": corridor.code if corridor else None,
             "name": corridor.name if corridor else "Tasdiqlangan route mavjud emas",
-            "origin_country_code": corridor.origin_country_code if corridor else origin,
-            "destination_country_code": corridor.destination_country_code if corridor else destination,
+            "origin_country_code": corridor.origin_country_code if corridor else row.origin_country_code,
+            "destination_country_code": corridor.destination_country_code if corridor else row.destination_country_code,
             "entry_post_code": row.entry_post_code,
             "exit_post_code": row.exit_post_code,
+            "entry_post_name": post_names.get(row.entry_post_code, row.entry_post_code),
+            "exit_post_name": post_names.get(row.exit_post_code, row.exit_post_code),
             "declaration_count": row.count,
             "percentage_share": round(row.count * 100 / total, 2) if total else 0,
             "avg_transit_minutes": round((row.avg_seconds or 0) / 60),
@@ -104,7 +122,15 @@ async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, or
             features.append({"type": "Feature", "geometry": geometry, "properties": properties})
         else:
             unavailable.append(properties)
-    post_rows = (await db.scalars(select(CustomsPost).where(CustomsPost.is_active.is_(True), CustomsPost.latitude.is_not(None)))).all()
+    feature_groups: dict[tuple[str | None, str | None], list[dict]] = {}
+    for feature in features:
+        properties = feature["properties"]
+        feature_groups.setdefault(
+            (properties["origin_country_code"], properties["destination_country_code"]), []
+        ).append(feature)
+    for group in feature_groups.values():
+        for index, feature in enumerate(group):
+            feature["properties"]["display_offset"] = round((index - (len(group) - 1) / 2) * 7, 2)
     entry_counts: dict[str, int] = {}
     exit_counts: dict[str, int] = {}
     for row in grouped:
@@ -139,7 +165,8 @@ async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, or
             "top_corridor": top_corridor["properties"]["name"] if top_corridor else "—", "avg_transit_minutes": round(sum((r.avg_seconds or 0) * r.count for r in grouped) / total / 60) if total else 0,
             "change_percent": change},
         "corridors": {"type": "FeatureCollection", "features": features}, "posts": posts_geojson, "unavailable_routes": unavailable,
-        "top_pairs": [{"entry": r.entry_post_code, "exit": r.exit_post_code, "count": r.count} for r in top_pairs],
+        "top_pairs": [{"origin": r.origin_country_code, "destination": r.destination_country_code,
+            "entry": r.entry_post_code, "exit": r.exit_post_code, "count": r.count} for r in top_pairs],
         "country_share": [{"country": r.origin_country_code, "count": r.count, "share": round(r.count * 100 / total, 1) if total else 0} for r in by_origin],
         "trend": [{"date": r.declaration_date, "count": r.count} for r in trend],
     }
