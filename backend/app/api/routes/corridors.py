@@ -6,11 +6,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from geoalchemy2.functions import ST_AsGeoJSON, ST_GeomFromGeoJSON, ST_SetSRID, ST_MakePoint
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.database import get_db
 from app.dependencies import admin_user, csrf_protect
 from app.models import Corridor, CorridorWaypoint, CustomsPost, User
-from app.schemas import CorridorCreate, CorridorUpdate, RoutePreviewRequest
+from app.schemas import CorridorCreate, CorridorRebuildRequest, CorridorUpdate, RoutePreviewRequest
 from app.routing import RoutingService
 from app.audit import add_audit
 
@@ -50,7 +51,7 @@ async def list_corridors(active_only: bool = True, db: AsyncSession = Depends(ge
 
 @router.post("/preview", dependencies=[Depends(csrf_protect)])
 async def preview_route(payload: RoutePreviewRequest, db: AsyncSession = Depends(get_db), _: User = Depends(admin_user)) -> dict:
-    result = await RoutingService(db).route([w.model_dump() for w in payload.waypoints], payload.force)
+    result = await RoutingService(db).route([w.model_dump() for w in payload.waypoints], payload.force, payload.routing_profile)
     if result.available:
         await db.commit()
     else:
@@ -58,8 +59,24 @@ async def preview_route(payload: RoutePreviewRequest, db: AsyncSession = Depends
     return {
         "status": "available" if result.available else "unavailable", "geometry": result.geometry,
         "distance_meters": result.distance_meters, "duration_seconds": result.duration_seconds,
-        "provider": "osrm", "cached": result.cached, "message": result.message,
+        "provider": result.provider, "cached": result.cached, "message": result.message,
     }
+
+
+def apply_route(corridor: Corridor, result) -> None:
+    if result.available and result.geometry:
+        corridor.geometry = ST_GeomFromGeoJSON(json.dumps(result.geometry))
+        corridor.distance_meters = result.distance_meters
+        corridor.duration_seconds = result.duration_seconds
+        corridor.geometry_hash = hashlib.sha256(json.dumps(result.geometry, sort_keys=True).encode()).hexdigest()
+        corridor.routing_provider = result.provider
+        corridor.geometry_source = f"{result.provider}-router"
+        corridor.route_needs_review = False
+        if corridor.status in ("DRAFT", "REVIEW"):
+            corridor.status = "ACTIVE"
+    else:
+        corridor.route_needs_review = True
+        corridor.status = "REVIEW"
 
 
 async def validate_posts(db: AsyncSession, entry: str, exit: str) -> None:
@@ -74,15 +91,6 @@ async def create_corridor(payload: CorridorCreate, request: Request, db: AsyncSe
     await validate_posts(db, payload.entry_post_code, payload.exit_post_code)
     if await db.scalar(select(Corridor.id).where(Corridor.code == payload.code)):
         raise HTTPException(status_code=409, detail="Bu korridor kodi mavjud")
-    duplicate = await db.scalar(select(Corridor.id).where(
-        Corridor.origin_country_code == payload.origin_country_code,
-        Corridor.destination_country_code == payload.destination_country_code,
-        Corridor.entry_post_code == payload.entry_post_code,
-        Corridor.exit_post_code == payload.exit_post_code,
-        Corridor.is_active.is_(True),
-    ))
-    if duplicate and payload.is_active:
-        raise HTTPException(status_code=409, detail="Bu yo'nalish uchun faol korridor mavjud")
     values = payload.model_dump(exclude={"waypoints", "build_route"})
     corridor = Corridor(**values)
     db.add(corridor)
@@ -95,17 +103,8 @@ async def create_corridor(payload: CorridorCreate, request: Request, db: AsyncSe
         point.location = ST_SetSRID(ST_MakePoint(point.longitude, point.latitude), 4326)
         db.add(point)
     if payload.build_route:
-        result = await RoutingService(db).route([w.model_dump() for w in payload.waypoints])
-        if result.available and result.geometry:
-            corridor.geometry = ST_GeomFromGeoJSON(json.dumps(result.geometry))
-            corridor.distance_meters = result.distance_meters
-            corridor.duration_seconds = result.duration_seconds
-            corridor.geometry_hash = hashlib.sha256(json.dumps(result.geometry, sort_keys=True).encode()).hexdigest()
-            corridor.route_needs_review = False
-            corridor.status = "ACTIVE" if corridor.status == "DRAFT" else corridor.status
-        else:
-            corridor.route_needs_review = True
-            corridor.status = "REVIEW"
+        result = await RoutingService(db).route([w.model_dump() for w in payload.waypoints], profile=payload.routing_profile)
+        apply_route(corridor, result)
     await add_audit(db, request, user, "CREATE", "corridor", str(corridor.id), after={"code": corridor.code, "name": corridor.name})
     await db.commit()
     await db.refresh(corridor, ["waypoints"])
@@ -114,14 +113,25 @@ async def create_corridor(payload: CorridorCreate, request: Request, db: AsyncSe
 
 @router.patch("/{corridor_id}", dependencies=[Depends(csrf_protect)])
 async def update_corridor(corridor_id: str, payload: CorridorUpdate, request: Request, db: AsyncSession = Depends(get_db), user: User = Depends(admin_user)) -> dict:
-    corridor = await db.scalar(select(Corridor).where(Corridor.id == corridor_id))
+    corridor = await db.scalar(select(Corridor).options(selectinload(Corridor.waypoints)).where(Corridor.id == corridor_id))
     if not corridor:
         raise HTTPException(status_code=404, detail="Korridor topilmadi")
     before = {"name": corridor.name, "status": corridor.status, "priority": corridor.priority}
     changes = payload.model_dump(exclude_unset=True, exclude={"waypoints", "rebuild_route"})
+    next_entry = changes.get("entry_post_code", corridor.entry_post_code)
+    next_exit = changes.get("exit_post_code", corridor.exit_post_code)
+    if "entry_post_code" in changes or "exit_post_code" in changes:
+        await validate_posts(db, next_entry, next_exit)
     for key, value in changes.items():
         setattr(corridor, key, value)
     if payload.waypoints is not None:
+        types = {waypoint.waypoint_type for waypoint in payload.waypoints}
+        if not {"ORIGIN_GATEWAY", "ENTRY_POST", "EXIT_POST", "DESTINATION_GATEWAY"}.issubset(types):
+            raise HTTPException(status_code=422, detail="Boshlanish, kirish posti, chiqish posti va tugash nuqtasi majburiy")
+        entry_waypoint = next(waypoint for waypoint in payload.waypoints if waypoint.waypoint_type == "ENTRY_POST")
+        exit_waypoint = next(waypoint for waypoint in payload.waypoints if waypoint.waypoint_type == "EXIT_POST")
+        if entry_waypoint.post_code != next_entry or exit_waypoint.post_code != next_exit:
+            raise HTTPException(status_code=422, detail="Waypoint postlari tanlangan kirish/chiqish postlariga mos emas")
         for existing in list(corridor.waypoints):
             await db.delete(existing)
         await db.flush()
@@ -133,20 +143,46 @@ async def update_corridor(corridor_id: str, payload: CorridorUpdate, request: Re
             point.location = ST_SetSRID(ST_MakePoint(point.longitude, point.latitude), 4326)
             db.add(point)
         if payload.rebuild_route:
-            result = await RoutingService(db).route([w.model_dump() for w in payload.waypoints], force=True)
-            if result.available and result.geometry:
-                corridor.geometry = ST_GeomFromGeoJSON(json.dumps(result.geometry))
-                corridor.distance_meters = result.distance_meters
-                corridor.duration_seconds = result.duration_seconds
-                corridor.geometry_hash = hashlib.sha256(json.dumps(result.geometry, sort_keys=True).encode()).hexdigest()
-                corridor.route_needs_review = False
-            else:
-                corridor.route_needs_review = True
-                corridor.status = "REVIEW"
+            result = await RoutingService(db).route([w.model_dump() for w in payload.waypoints], force=True, profile=corridor.routing_profile)
+            apply_route(corridor, result)
     await add_audit(db, request, user, "UPDATE", "corridor", str(corridor.id), before=before, after=changes)
     await db.commit()
     await db.refresh(corridor, ["waypoints"])
     return await corridor_dict(db, corridor)
+
+
+@router.post("/rebuild-road-geometries", dependencies=[Depends(csrf_protect)])
+async def rebuild_road_geometries(payload: CorridorRebuildRequest, request: Request, db: AsyncSession = Depends(get_db), user: User = Depends(admin_user)) -> dict:
+    ids: list[uuid.UUID] = []
+    for item in payload.corridor_ids:
+        try:
+            ids.append(uuid.UUID(item))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="Korridor identifikatori noto'g'ri") from exc
+    corridors = (await db.scalars(
+        select(Corridor).options(selectinload(Corridor.waypoints)).where(Corridor.id.in_(ids)).order_by(Corridor.priority, Corridor.code)
+    )).unique().all()
+    updated: list[str] = []
+    failed: list[dict] = []
+    service = RoutingService(db)
+    for corridor in corridors:
+        ordered = sorted(corridor.waypoints, key=lambda w: w.sequence_no)
+        if len(ordered) < 2:
+            corridor.route_needs_review = True
+            corridor.status = "REVIEW"
+            failed.append({"id": str(corridor.id), "code": corridor.code, "message": "Kamida 2 ta waypoint kerak"})
+            continue
+        waypoint_data = [{"latitude": w.latitude, "longitude": w.longitude} for w in ordered]
+        result = await service.route(waypoint_data, force=True, profile=payload.routing_profile)
+        apply_route(corridor, result)
+        corridor.routing_profile = payload.routing_profile
+        if result.available:
+            updated.append(str(corridor.id))
+        else:
+            failed.append({"id": str(corridor.id), "code": corridor.code, "message": result.message})
+    await add_audit(db, request, user, "REBUILD_ROUTES", "corridor", None, after={"requested": len(ids), "updated": len(updated), "failed": len(failed), "provider": RoutingService._provider()})
+    await db.commit()
+    return {"requested": len(ids), "processed": len(corridors), "updated": updated, "failed": failed, "provider": RoutingService._provider()}
 
 
 @router.delete("/{corridor_id}", dependencies=[Depends(csrf_protect)])

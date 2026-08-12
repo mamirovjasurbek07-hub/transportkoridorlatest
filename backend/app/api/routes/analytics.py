@@ -79,54 +79,56 @@ async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, or
     if destination:
         corridor_query = corridor_query.where(Corridor.destination_country_code == destination.upper())
     corridors = (await db.scalars(corridor_query)).all()
-    corridor_by_pair: dict[tuple[str | None, str | None, str, str], Corridor] = {}
+    corridors_by_pair: dict[tuple[str | None, str | None, str, str], list[Corridor]] = {}
     for c in sorted(corridors, key=lambda item: item.priority):
-        corridor_by_pair.setdefault(
-            (c.origin_country_code, c.destination_country_code, c.entry_post_code, c.exit_post_code), c
-        )
+        corridors_by_pair.setdefault(
+            (c.origin_country_code, c.destination_country_code, c.entry_post_code, c.exit_post_code), []
+        ).append(c)
     post_rows = (await db.scalars(select(CustomsPost).where(CustomsPost.is_active.is_(True), CustomsPost.latitude.is_not(None)))).all()
     posts_by_code = {post.post_code: post for post in post_rows}
     post_names = {code: post.post_name for code, post in posts_by_code.items()}
     features = []
     unavailable = []
     for row in grouped:
-        corridor = corridor_by_pair.get((
+        matched_corridors = corridors_by_pair.get((
             row.origin_country_code,
             row.destination_country_code,
             row.entry_post_code,
             row.exit_post_code,
-        ))
-        geometry = None
-        if corridor and corridor.geometry is not None:
-            raw = await db.scalar(select(ST_AsGeoJSON(Corridor.geometry)).where(Corridor.id == corridor.id))
-            geometry = json.loads(raw) if raw else None
-        properties = {
-            "id": str(corridor.id) if corridor else f"{row.entry_post_code}-{row.exit_post_code}",
-            "code": corridor.code if corridor else None,
-            "name": corridor.name if corridor else "Tasdiqlangan route mavjud emas",
-            "origin_country_code": corridor.origin_country_code if corridor else row.origin_country_code,
-            "destination_country_code": corridor.destination_country_code if corridor else row.destination_country_code,
-            "entry_post_code": row.entry_post_code,
-            "exit_post_code": row.exit_post_code,
-            "entry_post_name": post_names.get(row.entry_post_code, row.entry_post_code),
-            "exit_post_name": post_names.get(row.exit_post_code, row.exit_post_code),
-            "entry_allow_passenger": posts_by_code.get(row.entry_post_code).allow_passenger_vehicles if row.entry_post_code in posts_by_code else None,
-            "entry_allow_cargo": posts_by_code.get(row.entry_post_code).allow_cargo_vehicles if row.entry_post_code in posts_by_code else None,
-            "exit_allow_passenger": posts_by_code.get(row.exit_post_code).allow_passenger_vehicles if row.exit_post_code in posts_by_code else None,
-            "exit_allow_cargo": posts_by_code.get(row.exit_post_code).allow_cargo_vehicles if row.exit_post_code in posts_by_code else None,
-            "declaration_count": row.count,
-            "percentage_share": round(row.count * 100 / total, 2) if total else 0,
-            "avg_transit_minutes": round((row.avg_seconds or 0) / 60),
-            "min_transit_minutes": round((row.min_seconds or 0) / 60),
-            "max_transit_minutes": round((row.max_seconds or 0) / 60),
-            "distance_km": round((corridor.distance_meters or 0) / 1000, 1) if corridor else None,
-            "route_available": geometry is not None,
-            "color": corridor.color if corridor and corridor.color else "#22d3ee",
-        }
-        if geometry:
-            features.append({"type": "Feature", "geometry": geometry, "properties": properties})
-        else:
-            unavailable.append(properties)
+        ), [])
+        candidates: list[Corridor | None] = matched_corridors or [None]
+        for corridor in candidates:
+            geometry = None
+            if corridor and corridor.geometry is not None:
+                raw = await db.scalar(select(ST_AsGeoJSON(Corridor.geometry)).where(Corridor.id == corridor.id))
+                geometry = json.loads(raw) if raw else None
+            properties = {
+                "id": str(corridor.id) if corridor else f"{row.entry_post_code}-{row.exit_post_code}",
+                "code": corridor.code if corridor else None,
+                "name": corridor.name if corridor else "Tasdiqlangan route mavjud emas",
+                "origin_country_code": corridor.origin_country_code if corridor else row.origin_country_code,
+                "destination_country_code": corridor.destination_country_code if corridor else row.destination_country_code,
+                "entry_post_code": row.entry_post_code,
+                "exit_post_code": row.exit_post_code,
+                "entry_post_name": post_names.get(row.entry_post_code, row.entry_post_code),
+                "exit_post_name": post_names.get(row.exit_post_code, row.exit_post_code),
+                "entry_allow_passenger": posts_by_code.get(row.entry_post_code).allow_passenger_vehicles if row.entry_post_code in posts_by_code else None,
+                "entry_allow_cargo": posts_by_code.get(row.entry_post_code).allow_cargo_vehicles if row.entry_post_code in posts_by_code else None,
+                "exit_allow_passenger": posts_by_code.get(row.exit_post_code).allow_passenger_vehicles if row.exit_post_code in posts_by_code else None,
+                "exit_allow_cargo": posts_by_code.get(row.exit_post_code).allow_cargo_vehicles if row.exit_post_code in posts_by_code else None,
+                "declaration_count": row.count,
+                "percentage_share": round(row.count * 100 / total, 2) if total else 0,
+                "avg_transit_minutes": round((row.avg_seconds or 0) / 60),
+                "min_transit_minutes": round((row.min_seconds or 0) / 60),
+                "max_transit_minutes": round((row.max_seconds or 0) / 60),
+                "distance_km": round((corridor.distance_meters or 0) / 1000, 1) if corridor else None,
+                "route_available": geometry is not None,
+                "color": corridor.color if corridor and corridor.color else "#22d3ee",
+            }
+            if geometry:
+                features.append({"type": "Feature", "geometry": geometry, "properties": properties})
+            else:
+                unavailable.append(properties)
     feature_groups: dict[tuple[str | None, str | None], list[dict]] = {}
     for feature in features:
         properties = feature["properties"]

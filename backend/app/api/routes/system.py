@@ -8,6 +8,7 @@ from app.models import AppSetting, AuditLog, Corridor, CustomsPost, TransitDecla
 from app.seed import seed_demo_declarations
 from app.audit import add_audit
 from app.country_data import COUNTRIES
+from app.config import settings
 
 router = APIRouter(tags=["system"])
 
@@ -15,6 +16,19 @@ router = APIRouter(tags=["system"])
 async def health(db: AsyncSession = Depends(get_db)) -> dict:
     await db.execute(text("SELECT 1"))
     return {"status": "ok", "database": "connected"}
+
+
+@router.get("/map/config", tags=["map"])
+async def map_config() -> dict:
+    yandex_ready = settings.map_provider == "yandex" and bool(settings.yandex_maps_api_key.strip())
+    routing_provider = "yandex" if settings.routing_provider.lower() == "yandex" and settings.yandex_router_api_key.strip() else "osrm"
+    return {
+        "provider": "yandex" if yandex_ready else "osm",
+        "requested_provider": settings.map_provider,
+        "yandex_maps_api_key": settings.yandex_maps_api_key if yandex_ready else None,
+        "routing_provider": routing_provider,
+        "routing_profile": settings.routing_profile,
+    }
 
 
 @router.get("/countries", tags=["countries"])
