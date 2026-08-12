@@ -1,17 +1,25 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    email: str = Field(min_length=3, max_length=255)
     password: str = Field(min_length=8, max_length=200)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if "@" not in normalized or normalized.startswith("@") or normalized.endswith("@"):
+            raise ValueError("Email manzil noto'g'ri")
+        return normalized
 
 
 class UserRead(BaseModel):
     id: str
-    email: EmailStr
+    email: str
     role: str
     is_active: bool
 
@@ -157,4 +165,3 @@ class CorridorRead(BaseModel):
     waypoints: list[WaypointInput]
     created_at: datetime
     updated_at: datetime
-

@@ -3,13 +3,18 @@ import math
 import random
 from datetime import UTC, date, datetime, time, timedelta
 
+import structlog
 from geoalchemy2.functions import ST_GeomFromGeoJSON, ST_SetSRID, ST_MakePoint
 from sqlalchemy import delete, func, insert, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import noload
 
 from app.config import settings
 from app.models import Corridor, CorridorWaypoint, CountryGateway, CustomsPost, TransitDeclaration, User
-from app.security import hash_password
+from app.security import hash_password, verify_password
+
+
+logger = structlog.get_logger()
 
 
 POSTS = [
@@ -189,9 +194,35 @@ async def seed_demo_declarations(db: AsyncSession, reset: bool = False) -> int:
 
 
 async def seed_all(db: AsyncSession) -> None:
-    email = settings.admin_initial_email.lower()
-    if not await db.scalar(select(User.id).where(User.email == email)):
-        db.add(User(email=email, password_hash=hash_password(settings.admin_initial_password), role="ADMIN"))
+    # This application currently manages the bootstrap administrator through
+    # Render environment variables. Keep the single existing admin in sync so
+    # changing those variables can recover access without editing password
+    # hashes directly in Supabase.
+    email = settings.admin_initial_email.strip().lower()
+    user = await db.scalar(select(User).where(func.lower(User.email) == email))
+    admin_action = "verified"
+    if user is None:
+        admins = (await db.scalars(select(User).where(User.role == "ADMIN").order_by(User.created_at))).all()
+        if len(admins) == 1:
+            user = admins[0]
+            user.email = email
+            admin_action = "email_updated"
+        else:
+            user = User(email=email, password_hash=hash_password(settings.admin_initial_password), role="ADMIN")
+            db.add(user)
+            admin_action = "created"
+    else:
+        user.email = email
+    user.role = "ADMIN"
+    user.is_active = True
+    try:
+        password_matches = verify_password(settings.admin_initial_password, user.password_hash)
+    except Exception:
+        password_matches = False
+    if not password_matches:
+        user.password_hash = hash_password(settings.admin_initial_password)
+        admin_action = f"{admin_action}+password_updated"
+    await logger.ainfo("admin_credentials_synchronized", action=admin_action)
     existing_posts = {post.post_code: post for post in (await db.scalars(select(CustomsPost))).all()}
     for code, name, post_type, country in POSTS:
         post = existing_posts.get(code)
@@ -219,7 +250,12 @@ async def seed_all(db: AsyncSession) -> None:
         gateway.location = ST_SetSRID(ST_MakePoint(lng, lat), 4326)
         db.add(gateway)
     await db.flush()
-    existing_corridors = {corridor.code: corridor for corridor in (await db.scalars(select(Corridor))).unique().all()}
+    # Seed code must never trigger relationship lazy-loading in an async
+    # session. Waypoints are replaced explicitly below.
+    existing_corridors = {
+        corridor.code: corridor
+        for corridor in (await db.scalars(select(Corridor).options(noload(Corridor.waypoints)))).all()
+    }
     for priority, route in enumerate(ROUTES, start=1):
         geometry = {"type": "LineString", "coordinates": route["coords"]}
         corridor = existing_corridors.get(route["code"])
@@ -243,14 +279,18 @@ async def seed_all(db: AsyncSession) -> None:
         corridor.route_needs_review = False
         corridor.priority = priority
         corridor.is_active = True
-        corridor.waypoints.clear()
         await db.flush()
+        await db.execute(
+            delete(CorridorWaypoint)
+            .where(CorridorWaypoint.corridor_id == corridor.id)
+            .execution_options(synchronize_session=False)
+        )
         for seq, coord in enumerate(route["waypoints"]):
             waypoint_type = "ENTRY_POST" if seq == 0 else "EXIT_POST" if seq == len(route["waypoints"]) - 1 else "VIA"
-            wp = CorridorWaypoint(sequence_no=seq, waypoint_type=waypoint_type, latitude=coord[1], longitude=coord[0],
+            wp = CorridorWaypoint(corridor_id=corridor.id, sequence_no=seq, waypoint_type=waypoint_type, latitude=coord[1], longitude=coord[0],
                 post_code=route["entry"] if seq == 0 else route["exit"] if seq == len(route["waypoints"]) - 1 else None)
             wp.location = ST_SetSRID(ST_MakePoint(coord[0], coord[1]), 4326)
-            corridor.waypoints.append(wp)
+            db.add(wp)
     if settings.enable_demo_seed:
         await seed_demo_declarations(db)
     await db.commit()

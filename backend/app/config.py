@@ -34,6 +34,21 @@ class Settings(BaseSettings):
             return value.replace("postgresql://", "postgresql+asyncpg://", 1)
         return value
 
+    @field_validator("admin_initial_email", mode="before")
+    @classmethod
+    def normalized_admin_email(cls, value: str) -> str:
+        normalized = str(value).strip().lower()
+        if "@" not in normalized or normalized.startswith("@") or normalized.endswith("@"):
+            raise ValueError("ADMIN_INITIAL_EMAIL email ko'rinishida bo'lishi kerak")
+        return normalized
+
+    @field_validator("admin_initial_password")
+    @classmethod
+    def valid_admin_password(cls, value: str) -> str:
+        if len(value) < 8:
+            raise ValueError("ADMIN_INITIAL_PASSWORD kamida 8 belgidan iborat bo'lishi kerak")
+        return value
+
     @property
     def allowed_origins(self) -> list[str]:
         return [item.strip().rstrip("/") for item in self.cors_origins.split(",") if item.strip()]
