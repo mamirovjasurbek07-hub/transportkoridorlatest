@@ -18,6 +18,8 @@ Production’da React frontend FastAPI bilan bitta Render domenidan beriladi, ma
 - filter holatini URL query-param orqali ulashish;
 - oqim hajmiga mos qalinlikdagi glow/core/animated corridor layerlar;
 - post clustering va post ma’lumotlari popup’i;
+- ISO-2, raqamli kod yoki nom bo‘yicha tezkor davlat qidiruvi (`UZ - 860 - O'ZBEKISTON`);
+- Yandex sxema/satellite/hybrid rejimlari, ma’muriy chegaralar va qizil uzlukli O‘zbekiston konturi;
 - route yo‘q bo‘lsa to‘g‘ri chiziq chizmasdan `review` holati;
 - Yandex Maps xaritasi va OSRM adapteri, waypoint tartibi bo‘yicha to‘liq avtomobil yo‘li va PostGIS cache;
 - HttpOnly cookie, CSRF, CORS allowlist, login rate-limit va audit;
@@ -92,11 +94,12 @@ Public sahifada boshlanish/tugash davlati va sanani tanlab `Qo‘llash` bosing. 
 Admin sahifada:
 
 1. `Bojxona postlari` bo‘limida yangi post yarating. Xaritani bosing yoki latitude/longitude kiriting — marker va fokus darhol yangilanadi. CHBP uchun yengil va/yoki yuk transporti ruxsatini belgilang. Mavjud post koordinatasi o‘zgarsa bog‘langan faol yo‘laklar qayta hisoblanadi.
-2. `Korridorlar` bo‘limida yuk boshlanadigan/tugaydigan davlatlar hamda entry/exit postlarni tanlang. Davlat tanlanganda boshlanish va tugash markeri qo‘yiladi; uni xaritada sudrab aniq yuk manziliga olib boring.
-3. `Boshlanish`, `Oraliq nuqta` yoki `Tugash` rejimini tanlab xaritani bosing. `Avtomobil yo‘lini ko‘rish` OSRM orqali barcha markerlarni real yo‘l bo‘yicha bog‘laydi; so‘ng `Bazaga saqlash` tugmasini bosing.
-4. Oldin saqlangan geometriyalarni yangilash uchun corridorlar sahifasidagi `Barcha yo‘llarni yangilash` tugmasidan foydalaning. So‘rovlar Render va routerga og‘irlik qilmasligi uchun 5 tadan yuboriladi.
-5. Router route topmasa geometriya saqlanmaydi va corridor review holatiga o‘tadi.
-6. `Audit jurnali` barcha asosiy admin harakatlarini ko‘rsatadi.
+2. `Korridorlar` bo‘limida yuk boshlanadigan/tugaydigan davlatlar hamda entry/exit postlarni tanlang. Davlat kodi (`UZ`), raqamli kodi (`860`) yoki nomini yozib qidiring.
+3. `Boshlanish`, `Kirish posti`, `Oraliq/TIF`, `Chiqish posti` yoki `Tugash` rejimini tanlang. Xaritadagi post markerini bosish postni shu rolga avtomatik bog‘laydi. Postga bog‘langan route nuqtasi backendda ham bazadagi aniq post koordinatasiga snap qilinadi.
+4. Oddiy nuqtalarni sudrang; nuqta qatoridagi `+` bilan aynan undan keyin yangi VIA qo‘shing, strelkalar bilan tartiblang yoki `×` bilan olib tashlang. `Avtomobil yo‘lini ko‘rish` barcha nuqtalarni OSRM qaytargan real yo‘l geometriyasi bilan bog‘laydi; so‘ng `Bazaga saqlash` tugmasini bosing.
+5. Oldin saqlangan geometriyalarni yangilash uchun corridorlar sahifasidagi `Barcha yo‘llarni yangilash` tugmasidan foydalaning. So‘rovlar Render va routerga og‘irlik qilmasligi uchun 5 tadan yuboriladi.
+6. Router route topmasa geometriya saqlanmaydi va corridor review holatiga o‘tadi.
+7. `Audit jurnali` barcha asosiy admin harakatlarini ko‘rsatadi.
 
 ## Yandex Maps sozlamasi
 
