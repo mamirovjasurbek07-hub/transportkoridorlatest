@@ -17,9 +17,14 @@ class Settings(BaseSettings):
     admin_initial_password: str = "CHANGE_ME_NOW"
     cors_origins: str = "http://localhost:5173"
     frontend_url: str = "http://localhost:5173"
+    map_provider: Literal["osm", "yandex"] = "osm"
+    yandex_maps_api_key: str = ""
     routing_provider: str = "osrm"
     routing_base_url: str = "https://router.project-osrm.org"
-    routing_timeout_seconds: int = 15
+    routing_profile: Literal["driving", "truck"] = "driving"
+    yandex_router_api_key: str = ""
+    yandex_router_base_url: str = "https://api.routing.yandex.net/v2/route"
+    routing_timeout_seconds: int = 30
     enable_demo_seed: bool = True
     cookie_secure: bool = False
     cookie_samesite: Literal["lax", "strict", "none"] = "lax"

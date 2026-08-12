@@ -105,18 +105,24 @@ class CorridorBase(BaseModel):
     exit_post_code: str
     status: Literal["DRAFT", "ACTIVE", "REVIEW", "INACTIVE"] = "DRAFT"
     color: str | None = None
-    routing_profile: str = "driving"
+    routing_profile: Literal["driving", "truck"] = "driving"
     priority: int = Field(default=100, ge=1, le=9999)
     is_active: bool = True
-    waypoints: list[WaypointInput] = []
+    waypoints: list[WaypointInput] = Field(min_length=2, max_length=50)
 
     @model_validator(mode="after")
     def validate_waypoints(self) -> "CorridorBase":
-        if len(self.waypoints) < 2:
-            raise ValueError("Kamida 2 ta waypoint kerak")
         sequence = [w.sequence_no for w in self.waypoints]
         if len(set(sequence)) != len(sequence):
             raise ValueError("Waypoint tartib raqamlari takrorlanmasligi kerak")
+        types = {w.waypoint_type for w in self.waypoints}
+        required = {"ORIGIN_GATEWAY", "ENTRY_POST", "EXIT_POST", "DESTINATION_GATEWAY"}
+        if not required.issubset(types):
+            raise ValueError("Boshlanish, kirish posti, chiqish posti va tugash nuqtasi majburiy")
+        entry = next(w for w in self.waypoints if w.waypoint_type == "ENTRY_POST")
+        exit = next(w for w in self.waypoints if w.waypoint_type == "EXIT_POST")
+        if entry.post_code != self.entry_post_code or exit.post_code != self.exit_post_code:
+            raise ValueError("Waypoint post kodlari tanlangan kirish/chiqish postlariga mos emas")
         return self
 
 
@@ -126,17 +132,28 @@ class CorridorCreate(CorridorBase):
 
 class CorridorUpdate(BaseModel):
     name: str | None = None
+    origin_country_code: str | None = Field(default=None, min_length=2, max_length=2)
+    destination_country_code: str | None = Field(default=None, min_length=2, max_length=2)
+    entry_post_code: str | None = None
+    exit_post_code: str | None = None
+    routing_profile: Literal["driving", "truck"] | None = None
     status: str | None = None
     color: str | None = None
     priority: int | None = None
     is_active: bool | None = None
-    waypoints: list[WaypointInput] | None = None
+    waypoints: list[WaypointInput] | None = Field(default=None, min_length=4, max_length=50)
     rebuild_route: bool = False
 
 
 class RoutePreviewRequest(BaseModel):
     waypoints: list[WaypointInput] = Field(min_length=2)
     force: bool = False
+    routing_profile: Literal["driving", "truck"] = "driving"
+
+
+class CorridorRebuildRequest(BaseModel):
+    corridor_ids: list[str] = Field(min_length=1, max_length=10)
+    routing_profile: Literal["driving", "truck"] = "driving"
 
 
 class RouteResult(BaseModel):
