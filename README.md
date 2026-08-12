@@ -42,6 +42,12 @@ So‘ng:
 
 Docker demo login qiymatlari: `admin@example.local` / `CHANGE_ME_NOW`. Production’da bu parolni ishlatmang.
 
+Render/Supabase deploymentida `ADMIN_INITIAL_EMAIL` va `ADMIN_INITIAL_PASSWORD`
+admin kirish ma'lumotlarining asosiy manbasi hisoblanadi. Ular o'zgartirilib servis
+qayta deploy qilinsa, mavjud yagona admin yozuvi yangi qiymatlar bilan xavfsiz
+sinxronlanadi. Parolning o'zi bazada saqlanmaydi, faqat uning himoyalangan hash'i
+saqlanadi.
+
 ## Lokal dasturlash
 
 Backend uchun Python 3.12+ va PostGIS ishlayotgan PostgreSQL kerak. Ushbu loyiha tayyorlanayotganda kompyuterdagi Python ishga tushirilmadi.
