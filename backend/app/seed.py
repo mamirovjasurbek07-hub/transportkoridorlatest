@@ -72,6 +72,7 @@ COORDINATES = {
     "30004": (40.3734, 71.7603), "30010": (40.4168, 70.6102), "30006": (40.0317, 71.0772),
     "33001": (41.6538, 60.3001), "33004": (41.3337, 60.6175), "00101": (41.2579, 69.2812),
     "06006": (39.7681, 64.4556), "18005": (39.6542, 66.9597), "22005": (37.2611, 67.3086),
+    "22011": (37.201032, 67.299349), "26002": (41.296705, 69.298132),
 }
 
 ROUTES = [
@@ -96,9 +97,20 @@ ROUTES = [
 
 TASHKENT_JUNCTION = [69.279502, 41.149757]
 
+# OSRM simplified road geometries fetched once for the two additional border
+# branches requested by the project. Startup never calls the external router.
+UCHQORGON_TO_KAMCHIK = [[72.079728,41.135775],[72.100381,41.148732],[72.116349,41.180895],[72.153322,41.183843],[72.168847,41.200049],[72.189275,41.195214],[72.190303,41.103527],[72.179134,41.101488],[72.124418,41.124802],[72.088474,41.118696],[72.083933,41.126478],[72.007418,41.083864],[71.893169,41.056278],[71.85502,41.029439],[71.664048,41.000451],[71.619784,41.008087],[71.592047,40.995805],[71.500952,41.001985],[71.430042,40.967308],[71.342833,40.96603],[71.256896,40.990889],[71.168228,40.923257],[71.146192,40.922734],[70.881268,40.827518],[70.849977,40.79096],[70.810988,40.783039],[70.77931,40.884542],[70.746055,40.917749],[70.703145,40.931406],[70.667893,40.957203],[70.617978,41.021233],[70.582537,41.035442],[70.553593,41.078473],[70.504762,41.114189],[70.507976,41.103836],[70.500512,41.112695],[70.49866,41.10676],[70.487182,41.122934],[70.446565,41.145629],[70.447452,41.155461]]
+DARYO_PORT_BRANCH = [[67.029195,38.218868],[66.982243,38.208335],[66.989689,38.196254],[66.978761,38.177785],[66.970305,38.091708],[66.979751,38.078393],[66.96815,38.060915],[67.016325,38.015268],[67.019219,37.968952],[67.065139,37.884046],[66.991729,37.761214],[67.006059,37.700367],[66.995404,37.67133],[67.004891,37.650232],[67.089789,37.575222],[67.134766,37.466576],[67.1629,37.427719],[67.1993,37.284532],[67.263016,37.234429],[67.271897,37.211664],[67.299407,37.200789]]
+TOSHKENT_TOVAR_TO_JUNCTION = [[69.298324,41.296771],[69.295199,41.295638],[69.30416,41.285245],[69.328034,41.242366],[69.335684,41.231606],[69.332038,41.225837],[69.334485,41.224727],[69.334499,41.216666],[69.332776,41.204686],[69.329726,41.199984],[69.302448,41.179348],[69.283172,41.166803],[69.276799,41.164341],[69.269163,41.163856],[69.273854,41.16378],[69.27345,41.157989],[69.271057,41.155868],[69.279502,41.149757]]
+
 
 def _split_at_tashkent(coords: list[list[float]]) -> tuple[list[list[float]], list[list[float]]]:
     index = min(range(len(coords)), key=lambda i: (coords[i][0] - TASHKENT_JUNCTION[0]) ** 2 + (coords[i][1] - TASHKENT_JUNCTION[1]) ** 2)
+    return coords[: index + 1], coords[index:]
+
+
+def _split_at_point(coords: list[list[float]], point: list[float]) -> tuple[list[list[float]], list[list[float]]]:
+    index = min(range(len(coords)), key=lambda i: (coords[i][0] - point[0]) ** 2 + (coords[i][1] - point[1]) ** 2)
     return coords[: index + 1], coords[index:]
 
 
@@ -122,11 +134,16 @@ def _road_length(coords: list[list[float]]) -> int:
 
 def _derived_route(code: str, name: str, origin: str, destination: str, entry: str, exit: str, color: str, coords: list[list[float]]) -> dict:
     distance = _road_length(coords)
+    waypoints = [coords[0]]
+    includes_tashkent = any(abs(point[0] - TASHKENT_JUNCTION[0]) < 0.000001 and abs(point[1] - TASHKENT_JUNCTION[1]) < 0.000001 for point in coords)
+    if includes_tashkent and coords[0] != TASHKENT_JUNCTION and coords[-1] != TASHKENT_JUNCTION:
+        waypoints.append(TASHKENT_JUNCTION)
+    waypoints.append(coords[-1])
     return {
         "code": code, "name": name, "origin": origin, "destination": destination,
         "entry": entry, "exit": exit, "color": color, "distance": distance,
         "duration": round(distance / 15),
-        "waypoints": [coords[0], TASHKENT_JUNCTION, coords[-1]], "coords": coords,
+        "waypoints": waypoints, "coords": coords,
     }
 
 
@@ -139,19 +156,78 @@ _route_by_code = {route["code"]: route for route in ROUTES}
 _dostlik_to_tashkent, _tashkent_to_ayritom = _split_at_tashkent(_route_by_code["KG-UZ-AF-A"]["coords"])
 _gishtkoprik_to_tashkent, _tashkent_to_olot = _split_at_tashkent(_route_by_code["KZ-UZ-TM-A"]["coords"])
 _oybek_to_tashkent, _tashkent_to_gishtkoprik = _split_at_tashkent(_route_by_code["TJ-UZ-KZ-A"]["coords"])
+_, _kamchik_to_tashkent = _split_at_point(_dostlik_to_tashkent, UCHQORGON_TO_KAMCHIK[-1])
+_tashkent_to_termiz_join, _ = _split_at_point(_tashkent_to_ayritom, DARYO_PORT_BRANCH[0])
+_uchqorgon_to_tashkent = _join(UCHQORGON_TO_KAMCHIK, _kamchik_to_tashkent)
+_tashkent_to_daryo_port = _join(_tashkent_to_termiz_join, DARYO_PORT_BRANCH)
 _dostlik_to_gishtkoprik = _join(_dostlik_to_tashkent, _tashkent_to_gishtkoprik)
+_uchqorgon_to_gishtkoprik = _join(_uchqorgon_to_tashkent, _tashkent_to_gishtkoprik)
 _gishtkoprik_to_ayritom = _join(list(reversed(_tashkent_to_gishtkoprik)), _tashkent_to_ayritom)
+_gishtkoprik_to_daryo_port = _join(list(reversed(_tashkent_to_gishtkoprik)), _tashkent_to_daryo_port)
 _dostlik_to_olot = _join(_dostlik_to_tashkent, _tashkent_to_olot)
+_uchqorgon_to_olot = _join(_uchqorgon_to_tashkent, _tashkent_to_olot)
+_dostlik_to_daryo_port = _join(_dostlik_to_tashkent, _tashkent_to_daryo_port)
+_uchqorgon_to_ayritom = _join(_uchqorgon_to_tashkent, _tashkent_to_ayritom)
+_uchqorgon_to_daryo_port = _join(_uchqorgon_to_tashkent, _tashkent_to_daryo_port)
+_tovar_to_dostlik = _join(TOSHKENT_TOVAR_TO_JUNCTION, list(reversed(_dostlik_to_tashkent)))
+_tovar_to_uchqorgon = _join(TOSHKENT_TOVAR_TO_JUNCTION, list(reversed(_uchqorgon_to_tashkent)))
+_tovar_to_gishtkoprik = _join(TOSHKENT_TOVAR_TO_JUNCTION, _tashkent_to_gishtkoprik)
+_tovar_to_olot = _join(TOSHKENT_TOVAR_TO_JUNCTION, _tashkent_to_olot)
+_tovar_to_ayritom = _join(TOSHKENT_TOVAR_TO_JUNCTION, _tashkent_to_ayritom)
+_tovar_to_daryo_port = _join(TOSHKENT_TOVAR_TO_JUNCTION, _tashkent_to_daryo_port)
+
+_route_by_code["KG-UZ-AF-A"]["name"] = "Qirg'iziston — Afg'oniston · Do'stlik → Ayritom"
+_route_by_code["KG-UZ-AF-A"]["color"] = "#38bdf8"
 
 ROUTES.extend([
-    _derived_route("CN-UZ-UA-A", "Xitoy — O'zbekiston — Ukraina", "CN", "UA", "03002", "27021", "#fb4058", _dostlik_to_gishtkoprik),
-    _derived_route("RU-UZ-AF-A", "Rossiya — O'zbekiston — Afg'oniston", "RU", "AF", "27021", "22017", "#22d3ee", _gishtkoprik_to_ayritom),
-    _derived_route("AF-UZ-RU-A", "Afg'oniston — O'zbekiston — Rossiya", "AF", "RU", "22017", "27021", "#38bdf8", list(reversed(_gishtkoprik_to_ayritom))),
-    _derived_route("CN-UZ-TR-A", "Xitoy — O'zbekiston — Turkiya", "CN", "TR", "03002", "06010", "#f97316", _dostlik_to_olot),
-    _derived_route("TR-UZ-CN-A", "Turkiya — O'zbekiston — Xitoy", "TR", "CN", "06010", "03002", "#a78bfa", list(reversed(_dostlik_to_olot))),
-    _derived_route("AZ-UZ-KZ-A", "Ozarbayjon — O'zbekiston — Qozog'iston", "AZ", "KZ", "06010", "35004", "#34d399", _route_by_code["TM-UZ-KZ-A"]["coords"]),
-    _derived_route("GE-UZ-KG-A", "Gruziya — O'zbekiston — Qirg'iziston", "GE", "KG", "06010", "03002", "#60a5fa", list(reversed(_dostlik_to_olot))),
-    _derived_route("PK-UZ-KZ-A", "Pokiston — O'zbekiston — Qozog'iston", "PK", "KZ", "22017", "27021", "#e879f9", list(reversed(_gishtkoprik_to_ayritom))),
+    # Qirg'iziston → Afg'oniston: two entry and two exit posts (4 variants).
+    _derived_route("KG-AF-DOS-DARYO", "Qirg'iziston — Afg'oniston · Do'stlik → Daryo porti", "KG", "AF", "03002", "22011", "#f97316", _dostlik_to_daryo_port),
+    _derived_route("KG-AF-UCH-AYR", "Qirg'iziston — Afg'oniston · Uchqo'rg'on → Ayritom", "KG", "AF", "14003", "22017", "#a78bfa", _uchqorgon_to_ayritom),
+    _derived_route("KG-AF-UCH-DARYO", "Qirg'iziston — Afg'oniston · Uchqo'rg'on → Daryo porti", "KG", "AF", "14003", "22011", "#34d399", _uchqorgon_to_daryo_port),
+
+    # Xitoydan O'zbekiston orqali g'arb va janubga asosiy namunalar.
+    _derived_route("CN-UA-DOS-GIS", "Xitoy — Ukraina · Do'stlik → G'ishtko'prik", "CN", "UA", "03002", "27021", "#fb4058", _dostlik_to_gishtkoprik),
+    _derived_route("CN-UA-UCH-GIS", "Xitoy — Ukraina · Uchqo'rg'on → G'ishtko'prik", "CN", "UA", "14003", "27021", "#f59e0b", _uchqorgon_to_gishtkoprik),
+    _derived_route("CN-TR-DOS-OLOT", "Xitoy — Turkiya · Do'stlik → Olot", "CN", "TR", "03002", "06010", "#f97316", _dostlik_to_olot),
+    _derived_route("CN-TR-UCH-OLOT", "Xitoy — Turkiya · Uchqo'rg'on → Olot", "CN", "TR", "14003", "06010", "#a78bfa", _uchqorgon_to_olot),
+    _derived_route("CN-AF-DOS-AYR", "Xitoy — Afg'oniston · Do'stlik → Ayritom", "CN", "AF", "03002", "22017", "#06b6d4", _join(_dostlik_to_tashkent, _tashkent_to_ayritom)),
+    _derived_route("CN-AF-DOS-DARYO", "Xitoy — Afg'oniston · Do'stlik → Daryo porti", "CN", "AF", "03002", "22011", "#f97316", _dostlik_to_daryo_port),
+    _derived_route("CN-AF-UCH-AYR", "Xitoy — Afg'oniston · Uchqo'rg'on → Ayritom", "CN", "AF", "14003", "22017", "#8b5cf6", _uchqorgon_to_ayritom),
+    _derived_route("CN-AF-UCH-DARYO", "Xitoy — Afg'oniston · Uchqo'rg'on → Daryo porti", "CN", "AF", "14003", "22011", "#22c55e", _uchqorgon_to_daryo_port),
+
+    # Shimol, Kavkaz, Janubiy Osiyo va qo'shni davlatlar tranziti.
+    _derived_route("RU-AF-GIS-AYR", "Rossiya — Afg'oniston · G'ishtko'prik → Ayritom", "RU", "AF", "27021", "22017", "#22d3ee", _gishtkoprik_to_ayritom),
+    _derived_route("RU-AF-GIS-DARYO", "Rossiya — Afg'oniston · G'ishtko'prik → Daryo porti", "RU", "AF", "27021", "22011", "#f59e0b", _gishtkoprik_to_daryo_port),
+    _derived_route("AF-RU-AYR-GIS", "Afg'oniston — Rossiya · Ayritom → G'ishtko'prik", "AF", "RU", "22017", "27021", "#38bdf8", list(reversed(_gishtkoprik_to_ayritom))),
+    _derived_route("AF-RU-DARYO-GIS", "Afg'oniston — Rossiya · Daryo porti → G'ishtko'prik", "AF", "RU", "22011", "27021", "#e879f9", list(reversed(_gishtkoprik_to_daryo_port))),
+    _derived_route("PK-KZ-AYR-GIS", "Pokiston — Qozog'iston · Ayritom → G'ishtko'prik", "PK", "KZ", "22017", "27021", "#e879f9", list(reversed(_gishtkoprik_to_ayritom))),
+    _derived_route("IN-KZ-DARYO-GIS", "Hindiston — Qozog'iston · Daryo porti → G'ishtko'prik", "IN", "KZ", "22011", "27021", "#14b8a6", list(reversed(_gishtkoprik_to_daryo_port))),
+    _derived_route("AZ-KZ-OLOT-DOV", "Ozarbayjon — Qozog'iston · Olot → Dovut-ota", "AZ", "KZ", "06010", "35004", "#34d399", _route_by_code["TM-UZ-KZ-A"]["coords"]),
+    _derived_route("GE-KG-OLOT-DOS", "Gruziya — Qirg'iziston · Olot → Do'stlik", "GE", "KG", "06010", "03002", "#60a5fa", list(reversed(_dostlik_to_olot))),
+    _derived_route("TJ-TM-OYB-OLOT", "Tojikiston — Turkmaniston · Oybek → Olot", "TJ", "TM", "27011", "06010", "#f43f5e", _join(_oybek_to_tashkent, _tashkent_to_olot)),
+    _derived_route("KG-KZ-DOS-GIS", "Qirg'iziston — Qozog'iston · Do'stlik → G'ishtko'prik", "KG", "KZ", "03002", "27021", "#0ea5e9", _dostlik_to_gishtkoprik),
+    _derived_route("KG-KZ-UCH-GIS", "Qirg'iziston — Qozog'iston · Uchqo'rg'on → G'ishtko'prik", "KG", "KZ", "14003", "27021", "#8b5cf6", _uchqorgon_to_gishtkoprik),
+    _derived_route("AF-CN-AYR-DOS", "Afg'oniston — Xitoy · Ayritom → Do'stlik", "AF", "CN", "22017", "03002", "#06b6d4", list(reversed(_join(_dostlik_to_tashkent, _tashkent_to_ayritom)))),
+    _derived_route("AF-CN-DARYO-UCH", "Afg'oniston — Xitoy · Daryo porti → Uchqo'rg'on", "AF", "CN", "22011", "14003", "#f59e0b", list(reversed(_uchqorgon_to_daryo_port))),
+
+    # O'zbekistondan chiqadigan va O'zbekistonga keladigan shablonlar.
+    _derived_route("UZ-CN-TOV-DOS", "O'zbekiston — Xitoy · Toshkent-tovar → Do'stlik", "UZ", "CN", "26002", "03002", "#22d3ee", _tovar_to_dostlik),
+    _derived_route("UZ-CN-TOV-UCH", "O'zbekiston — Xitoy · Toshkent-tovar → Uchqo'rg'on", "UZ", "CN", "26002", "14003", "#a78bfa", _tovar_to_uchqorgon),
+    _derived_route("CN-UZ-DOS-TOV", "Xitoy — O'zbekiston · Do'stlik → Toshkent-tovar", "CN", "UZ", "03002", "26002", "#06b6d4", list(reversed(_tovar_to_dostlik))),
+    _derived_route("CN-UZ-UCH-TOV", "Xitoy — O'zbekiston · Uchqo'rg'on → Toshkent-tovar", "CN", "UZ", "14003", "26002", "#8b5cf6", list(reversed(_tovar_to_uchqorgon))),
+    _derived_route("UZ-RU-TOV-GIS", "O'zbekiston — Rossiya · Toshkent-tovar → G'ishtko'prik", "UZ", "RU", "26002", "27021", "#0ea5e9", _tovar_to_gishtkoprik),
+    _derived_route("RU-UZ-GIS-TOV", "Rossiya — O'zbekiston · G'ishtko'prik → Toshkent-tovar", "RU", "UZ", "27021", "26002", "#38bdf8", list(reversed(_tovar_to_gishtkoprik))),
+    _derived_route("UZ-DE-TOV-GIS", "O'zbekiston — Germaniya · Toshkent-tovar → G'ishtko'prik", "UZ", "DE", "26002", "27021", "#fbbf24", _tovar_to_gishtkoprik),
+    _derived_route("DE-UZ-GIS-TOV", "Germaniya — O'zbekiston · G'ishtko'prik → Toshkent-tovar", "DE", "UZ", "27021", "26002", "#f59e0b", list(reversed(_tovar_to_gishtkoprik))),
+    _derived_route("UZ-PL-TOV-GIS", "O'zbekiston — Polsha · Toshkent-tovar → G'ishtko'prik", "UZ", "PL", "26002", "27021", "#ef4444", _tovar_to_gishtkoprik),
+    _derived_route("UZ-FR-TOV-GIS", "O'zbekiston — Fransiya · Toshkent-tovar → G'ishtko'prik", "UZ", "FR", "26002", "27021", "#3b82f6", _tovar_to_gishtkoprik),
+    _derived_route("UZ-IT-TOV-GIS", "O'zbekiston — Italiya · Toshkent-tovar → G'ishtko'prik", "UZ", "IT", "26002", "27021", "#10b981", _tovar_to_gishtkoprik),
+    _derived_route("UZ-TR-TOV-OLOT", "O'zbekiston — Turkiya · Toshkent-tovar → Olot", "UZ", "TR", "26002", "06010", "#f97316", _tovar_to_olot),
+    _derived_route("TR-UZ-OLOT-TOV", "Turkiya — O'zbekiston · Olot → Toshkent-tovar", "TR", "UZ", "06010", "26002", "#a78bfa", list(reversed(_tovar_to_olot))),
+    _derived_route("UZ-AF-TOV-AYR", "O'zbekiston — Afg'oniston · Toshkent-tovar → Ayritom", "UZ", "AF", "26002", "22017", "#22c55e", _tovar_to_ayritom),
+    _derived_route("UZ-AF-TOV-DARYO", "O'zbekiston — Afg'oniston · Toshkent-tovar → Daryo porti", "UZ", "AF", "26002", "22011", "#f59e0b", _tovar_to_daryo_port),
+    _derived_route("AF-UZ-AYR-TOV", "Afg'oniston — O'zbekiston · Ayritom → Toshkent-tovar", "AF", "UZ", "22017", "26002", "#34d399", list(reversed(_tovar_to_ayritom))),
+    _derived_route("AF-UZ-DARYO-TOV", "Afg'oniston — O'zbekiston · Daryo porti → Toshkent-tovar", "AF", "UZ", "22011", "26002", "#eab308", list(reversed(_tovar_to_daryo_port))),
 ])
 
 GATEWAYS = [
@@ -164,12 +240,16 @@ GATEWAYS = [
 
 async def seed_demo_declarations(db: AsyncSession, reset: bool = False) -> int:
     today = date.today()
-    source_version = f"DEMO_V2_{today.year}"
+    source_version = f"DEMO_V3_{today.year}"
     count = 10_000
     existing = await db.scalar(select(func.count()).select_from(TransitDeclaration).where(TransitDeclaration.source_system == source_version)) or 0
     if existing >= count and not reset:
         return existing
-    await db.execute(delete(TransitDeclaration).where(or_(TransitDeclaration.source_system == "MOCK", TransitDeclaration.source_system.like("DEMO_V2%"))))
+    await db.execute(delete(TransitDeclaration).where(or_(
+        TransitDeclaration.source_system == "MOCK",
+        TransitDeclaration.source_system.like("DEMO_V2%"),
+        TransitDeclaration.source_system.like("DEMO_V3%"),
+    )))
     rng = random.Random(20260811)
     start = date(today.year, 1, 1)
     pairs = [(r["origin"], r["destination"], r["entry"], r["exit"], max(5, 24 - index)) for index, r in enumerate(ROUTES)]
@@ -180,7 +260,7 @@ async def seed_demo_declarations(db: AsyncSession, reset: bool = False) -> int:
         entry_dt = datetime.combine(day, time(rng.randint(0, 23), rng.randint(0, 59)), tzinfo=UTC)
         duration = rng.randint(2 * 60, 48 * 60)
         batch.append({
-            "declaration_no": f"DEMO2-{today.year}-{i + 1:06d}", "source_system": source_version, "declaration_date": day,
+            "declaration_no": f"DEMO3-{today.year}-{i + 1:06d}", "source_system": source_version, "declaration_date": day,
             "origin_country_code": origin, "destination_country_code": destination, "entry_post_code": entry, "exit_post_code": exit,
             "entry_time": entry_dt, "exit_time": entry_dt + timedelta(minutes=duration), "vehicle_no": f"TEST-{rng.randint(1000,9999)}",
             "carrier_name": "Demo tashuvchi", "state": "COMPLETED",
@@ -256,10 +336,15 @@ async def seed_all(db: AsyncSession) -> None:
         corridor.code: corridor
         for corridor in (await db.scalars(select(Corridor).options(noload(Corridor.waypoints)))).all()
     }
+    current_route_codes = {route["code"] for route in ROUTES}
+    for code, corridor in existing_corridors.items():
+        if code not in current_route_codes and corridor.geometry_source in {"verified-osrm-seed-v2", "verified-osrm-seed-v3"}:
+            corridor.is_active = False
+            corridor.status = "INACTIVE"
     for priority, route in enumerate(ROUTES, start=1):
         geometry = {"type": "LineString", "coordinates": route["coords"]}
         corridor = existing_corridors.get(route["code"])
-        if corridor is not None and corridor.geometry_source == "verified-osrm-seed-v2":
+        if corridor is not None and corridor.geometry_source == "verified-osrm-seed-v3":
             continue
         if corridor is None:
             corridor = Corridor(code=route["code"])
@@ -271,7 +356,7 @@ async def seed_all(db: AsyncSession) -> None:
         corridor.exit_post_code = route["exit"]
         corridor.status = "ACTIVE"
         corridor.color = route["color"]
-        corridor.geometry_source = "verified-osrm-seed-v2"
+        corridor.geometry_source = "verified-osrm-seed-v3"
         corridor.routing_provider = "osrm-seed-cache"
         corridor.geometry = ST_GeomFromGeoJSON(json.dumps(geometry))
         corridor.distance_meters = route["distance"]
