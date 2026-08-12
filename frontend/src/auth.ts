@@ -22,7 +22,7 @@ export const useAuth = create<AuthState>((set) => ({
   login: async (email, password) => {
     set({ loading: true })
     try {
-      const result = await api<{ user: User; csrf_token: string; password_change_recommended: boolean }>('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) })
+      const result = await api<{ user: User; csrf_token: string; password_change_recommended: boolean }>('/auth/login', { method: 'POST', body: JSON.stringify({ email: email.trim().toLowerCase(), password }) })
       setCsrfToken(result.csrf_token)
       set({ user: result.user, checked: true })
       return { password_change_recommended: result.password_change_recommended }
