@@ -17,6 +17,8 @@ Public xaritaning default `map_mode=posts` rejimi corridor geometriyasini umuman
 
 `origin` tanlanganda frontend tugash davlatlarini faol corridor katalogidagi mavjud juftliklar bilan cheklaydi. `origin + destination` bitta yo‘nalish guruhi bo‘lib, bir xil davlat juftligiga tegishli barcha alternativ corridorlar (turli entry/exit post va waypointlar) qaytariladi. Corridorning o‘zida tashuv bo‘lmasa ham tasdiqlangan geometriyasi guruh xaritasida nol oqim bilan ko‘rinadi. `/map/uzbekistan-border` geoBoundaries faylini server orqali proxy qilib, 24 soat xotirada keshlaydi; bu GitHub raw CORS cheklovini brauzerdan olib tashlaydi.
 
+GeoBoundaries repository katta fayllar uchun Git LFS ishlatadi. Oddiy `raw.githubusercontent.com` manzili haqiqiy GeoJSON o‘rniga 131 baytli LFS pointer qaytarishi mumkin; proxy URL’ni `media.githubusercontent.com/media/...` formatiga aylantiradi va pinned media URL bilan fallback qiladi. Ikkala tashqi manba ishlamasa ham endpoint bo‘sh `FeatureCollection` bilan HTTP 200 qaytaradi. Corridor mutationlarida `commit`dan keyin scalar ustunlar va waypointlar `populate_existing + selectinload` orqali qayta o‘qiladi, shuning uchun async serializer yashirin IO boshlamaydi.
+
 `RoutingService` provider/profile/rounded coordinates/order asosida SHA-256 cache-key yaratadi. Public so‘rov routerga chiqmaydi. Faqat admin preview/rebuild tashqi routerdan foydalanadi. Route topilmasa straight-line fallback yo‘q.
 
 ## API
