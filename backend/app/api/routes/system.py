@@ -1,7 +1,7 @@
 import time
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -44,20 +44,42 @@ async def uzbekistan_border() -> dict:
     if _border_cache and now - _border_cache[0] < 86_400:
         return _border_cache[1]
     metadata_url = "https://www.geoboundaries.org/api/current/gbOpen/UZB/ADM0/"
+    pinned_media_url = "https://media.githubusercontent.com/media/wmgeolab/geoBoundaries/9469f09/releaseData/gbOpen/UZB/ADM0/geoBoundaries-UZB-ADM0_simplified.geojson"
     try:
         async with httpx.AsyncClient(timeout=20, follow_redirects=True, headers={"User-Agent": "transit-corridors/1.0"}) as client:
-            metadata_response = await client.get(metadata_url)
-            metadata_response.raise_for_status()
-            geometry_url = metadata_response.json()["simplifiedGeometryGeoJSON"]
-            if geometry_url.startswith("https://github.com/"):
-                geometry_url = geometry_url.replace("https://github.com/", "https://raw.githubusercontent.com/", 1).replace("/raw/", "/", 1)
-            geometry_response = await client.get(geometry_url)
-            geometry_response.raise_for_status()
-            result = geometry_response.json()
-    except (httpx.HTTPError, KeyError, ValueError) as exc:
+            candidates = [pinned_media_url]
+            try:
+                metadata_response = await client.get(metadata_url)
+                metadata_response.raise_for_status()
+                geometry_url = metadata_response.json()["simplifiedGeometryGeoJSON"]
+                if geometry_url.startswith("https://github.com/"):
+                    # geoBoundaries stores large GeoJSON files in Git LFS. The raw
+                    # host returns only a 131-byte pointer; the media host returns
+                    # the actual file.
+                    geometry_url = geometry_url.replace("https://github.com/", "https://media.githubusercontent.com/media/", 1).replace("/raw/", "/", 1)
+                candidates.insert(0, geometry_url)
+            except (httpx.HTTPError, KeyError, ValueError):
+                pass
+            result = None
+            for candidate in dict.fromkeys(candidates):
+                try:
+                    geometry_response = await client.get(candidate)
+                    geometry_response.raise_for_status()
+                    payload = geometry_response.json()
+                    if payload.get("type") == "FeatureCollection":
+                        result = payload
+                        break
+                except (httpx.HTTPError, ValueError, AttributeError):
+                    continue
+            if result is None:
+                raise ValueError("GeoJSON media fayli olinmadi")
+    except (httpx.HTTPError, KeyError, ValueError):
         if _border_cache:
             return _border_cache[1]
-        raise HTTPException(status_code=503, detail="O'zbekiston chegarasi vaqtincha yuklanmadi") from exc
+        # The Yandex administrative layer still has the national border. An
+        # empty collection keeps this optional overlay from breaking the map
+        # or flooding the browser console with repeated 503 responses.
+        result = {"type": "FeatureCollection", "features": []}
     _border_cache = (now, result)
     return result
 

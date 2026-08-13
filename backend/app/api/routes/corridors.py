@@ -40,6 +40,19 @@ async def corridor_dict(db: AsyncSession, corridor: Corridor, include_geometry: 
     }
 
 
+async def reload_corridor(db: AsyncSession, corridor_id: uuid.UUID) -> Corridor:
+    """Reload every scalar and waypoint after commit without implicit async IO."""
+    corridor = await db.scalar(
+        select(Corridor)
+        .options(selectinload(Corridor.waypoints))
+        .where(Corridor.id == corridor_id)
+        .execution_options(populate_existing=True)
+    )
+    if corridor is None:
+        raise HTTPException(status_code=404, detail="Korridor topilmadi")
+    return corridor
+
+
 @router.get("")
 async def list_corridors(active_only: bool = True, include_geometry: bool = True, db: AsyncSession = Depends(get_db)) -> dict:
     query = select(Corridor).order_by(Corridor.priority, Corridor.name)
@@ -137,10 +150,10 @@ async def create_corridor(payload: CorridorCreate, request: Request, db: AsyncSe
     if payload.build_route:
         result = await RoutingService(db).route(waypoint_data, profile=payload.routing_profile)
         apply_route(corridor, result)
-    await add_audit(db, request, user, "CREATE", "corridor", str(corridor.id), after={"code": corridor.code, "name": corridor.name})
+    corridor_id_value = corridor.id
+    await add_audit(db, request, user, "CREATE", "corridor", str(corridor_id_value), after={"code": corridor.code, "name": corridor.name})
     await db.commit()
-    await db.refresh(corridor, ["waypoints"])
-    return await corridor_dict(db, corridor)
+    return await corridor_dict(db, await reload_corridor(db, corridor_id_value))
 
 
 @router.patch("/{corridor_id}", dependencies=[Depends(csrf_protect)])
@@ -178,10 +191,10 @@ async def update_corridor(corridor_id: str, payload: CorridorUpdate, request: Re
         if payload.rebuild_route:
             result = await RoutingService(db).route(waypoint_data, force=True, profile=corridor.routing_profile)
             apply_route(corridor, result)
-    await add_audit(db, request, user, "UPDATE", "corridor", str(corridor.id), before=before, after=changes)
+    corridor_id_value = corridor.id
+    await add_audit(db, request, user, "UPDATE", "corridor", str(corridor_id_value), before=before, after=changes)
     await db.commit()
-    await db.refresh(corridor, ["waypoints"])
-    return await corridor_dict(db, corridor)
+    return await corridor_dict(db, await reload_corridor(db, corridor_id_value))
 
 
 @router.post("/rebuild-road-geometries", dependencies=[Depends(csrf_protect)])
