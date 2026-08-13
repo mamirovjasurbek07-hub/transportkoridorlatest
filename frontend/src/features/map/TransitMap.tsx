@@ -2,10 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import bbox from '@turf/bbox'
 import maplibregl, { GeoJSONSource, Map, MapLayerMouseEvent, Popup } from 'maplibre-gl'
 import { LocateFixed, Maximize2, Minimize2 } from 'lucide-react'
-import { api } from '../../api'
 import type { FeatureCollection } from '../../types'
 import { getMapStyle } from './mapStyle'
-import { useMapProvider } from './mapProvider'
+import { getUzbekistanBorder, useMapProvider } from './mapProvider'
 import { YandexTransitMap } from './YandexMaps'
 
 interface Props {
@@ -53,7 +52,7 @@ function MapLibreTransitMap({ posts = empty, corridors = empty, selectedId, onCo
       map.addLayer({ id: 'post-flow-glow', type: 'circle', source: 'posts', filter: ['!', ['has', 'point_count']], paint: { 'circle-color': ['match', ['get', 'post_type'], 'CHBP', '#fb4058', 'AERO', '#fbbf24', 'RW', '#a78bfa', 'PORT', '#34d399', '#38bdf8'], 'circle-radius': ['interpolate', ['linear'], ['get', 'total_flow'], 0, 6, 100, 9, 1000, 13, 10000, 16], 'circle-blur': .7, 'circle-opacity': .28 } })
       map.addLayer({ id: 'post-points', type: 'circle', source: 'posts', filter: ['!', ['has', 'point_count']], paint: { 'circle-color': ['match', ['get', 'post_type'], 'CHBP', '#fb4058', 'AERO', '#fbbf24', 'RW', '#a78bfa', 'PORT', '#34d399', '#38bdf8'], 'circle-radius': ['interpolate', ['linear'], ['get', 'total_flow'], 0, 4, 100, 6, 1000, 9, 10000, 12], 'circle-stroke-width': 1.4, 'circle-stroke-color': '#e8fdff' } })
 
-      void api<GeoJSON.FeatureCollection>('/map/uzbekistan-border')
+      void getUzbekistanBorder()
         .then((border) => {
           if (mapRef.current !== map || map.getSource('uzbekistan-border')) return
           map.addSource('uzbekistan-border', { type: 'geojson', data: border })

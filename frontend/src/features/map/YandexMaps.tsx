@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { LocateFixed, Maximize2, Minimize2 } from 'lucide-react'
-import { api } from '../../api'
 import type { CustomsPost, FeatureCollection, Waypoint } from '../../types'
-import { loadYandexMaps, safeHtml } from './mapProvider'
+import { getUzbekistanBorder, loadYandexMaps, safeHtml } from './mapProvider'
 
 type AnyObject = Record<string, any>
 
@@ -15,7 +14,7 @@ function addUzbekistanBorder(ymaps: AnyObject, map: AnyObject): void {
     border.setOptions({ fillOpacity: 0, strokeColor: '#ff1f47', strokeWidth: 6, strokeOpacity: 1, strokeStyle: 'dash' })
     border.addToMap(map)
   }
-  const fallback = async () => { try { add(await api<GeoJSON.FeatureCollection>('/map/uzbekistan-border')) } catch { /* Yandex admin layer still shows the administrative border. */ } }
+  const fallback = async () => { try { add(await getUzbekistanBorder()) } catch { /* Yandex admin layer still shows the administrative border. */ } }
   if (ymaps.borders?.load) void ymaps.borders.load('UZ', { lang: 'ru', quality: 2 }).then(add, fallback)
   else void fallback()
 }

@@ -17,6 +17,7 @@ declare global {
 
 let configPromise: Promise<PublicMapConfig> | null = null
 let yandexPromise: Promise<YandexApi> | null = null
+let borderPromise: Promise<GeoJSON.FeatureCollection> | null = null
 
 export function getMapConfig(): Promise<PublicMapConfig> {
   if (!configPromise) configPromise = api<PublicMapConfig>('/map/config')
@@ -41,6 +42,11 @@ export function loadYandexMaps(apiKey: string): Promise<YandexApi> {
     document.head.appendChild(script)
   })
   return yandexPromise
+}
+
+export function getUzbekistanBorder(): Promise<GeoJSON.FeatureCollection> {
+  if (!borderPromise) borderPromise = api<GeoJSON.FeatureCollection>('/map/uzbekistan-border')
+  return borderPromise
 }
 
 export function safeHtml(value: unknown): string {
