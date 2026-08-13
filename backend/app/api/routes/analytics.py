@@ -99,7 +99,10 @@ async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, or
     geometry_by_id = {
         corridor_id: json.loads(raw)
         for corridor_id, raw in (await db.execute(
-            select(Corridor.id, ST_AsGeoJSON(Corridor.geometry)).where(Corridor.id.in_([corridor.id for corridor in valid_geometry_corridors]))
+            select(
+                Corridor.id,
+                ST_AsGeoJSON(func.ST_SimplifyPreserveTopology(Corridor.geometry, 0.0003), 6),
+            ).where(Corridor.id.in_([corridor.id for corridor in valid_geometry_corridors]))
         )).all()
         if raw
     } if valid_geometry_corridors else {}
