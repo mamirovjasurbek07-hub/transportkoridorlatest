@@ -102,7 +102,7 @@ export default function CorridorsAdminPage() {
     mutationFn: () => editing
       ? api(`/corridors/${editing.id}`, { method: 'PATCH', body: JSON.stringify({ name: form.name, origin_country_code: form.origin_country_code, destination_country_code: form.destination_country_code, entry_post_code: form.entry_post_code, exit_post_code: form.exit_post_code, status: form.status, color: form.color, routing_profile: form.routing_profile, priority: form.priority, is_active: form.is_active, waypoints: form.waypoints, rebuild_route: true }) })
       : api('/corridors', { method: 'POST', body: JSON.stringify({ ...form, build_route: true }) }),
-    onSuccess: () => { void client.invalidateQueries({ queryKey: ['admin-corridors'] }); close(); setToast({ type: 'success', message: "Corridor va uning barcha nuqtalari bazaga saqlandi" }) },
+    onSuccess: () => { void client.invalidateQueries({ queryKey: ['admin-corridors'] }); void client.invalidateQueries({ queryKey: ['corridors-public'] }); void client.invalidateQueries({ queryKey: ['analytics'] }); close(); setToast({ type: 'success', message: "Corridor va uning barcha nuqtalari bazaga saqlandi" }) },
     onError: (error) => setToast({ type: 'error', message: error instanceof ApiError ? error.message : 'Saqlashda xato' }),
   })
   const remove = useMutation({ mutationFn: (id: string) => api(`/corridors/${id}`, { method: 'DELETE' }), onSuccess: () => { void client.invalidateQueries({ queryKey: ['admin-corridors'] }); setToast({ type: 'success', message: 'Corridor nofaol qilindi' }) } })
