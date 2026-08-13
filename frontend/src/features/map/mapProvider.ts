@@ -33,13 +33,17 @@ export function useMapProvider(): PublicMapConfig | null {
 export function loadYandexMaps(apiKey: string): Promise<YandexApi> {
   if (window.ymaps) return new Promise((resolve) => window.ymaps!.ready(() => resolve(window.ymaps!)))
   if (yandexPromise) return yandexPromise
-  yandexPromise = new Promise((resolve, reject) => {
+  const pending = new Promise<YandexApi>((resolve, reject) => {
     const script = document.createElement('script')
     script.src = `https://api-maps.yandex.ru/2.1/?apikey=${encodeURIComponent(apiKey)}&lang=ru_RU`
     script.async = true
     script.onload = () => window.ymaps ? window.ymaps.ready(() => resolve(window.ymaps!)) : reject(new Error('Yandex Maps yuklanmadi'))
     script.onerror = () => reject(new Error('Yandex Maps skripti yuklanmadi'))
     document.head.appendChild(script)
+  })
+  yandexPromise = pending.catch((error) => {
+    yandexPromise = null
+    throw error
   })
   return yandexPromise
 }

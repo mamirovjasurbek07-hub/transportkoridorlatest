@@ -7,29 +7,34 @@ type AnyObject = Record<string, any>
 
 const empty: FeatureCollection = { type: 'FeatureCollection', features: [] }
 
-function toYandexCoordinateOrder(value: unknown): unknown {
-  if (!Array.isArray(value)) return value
-  if (value.length >= 2 && typeof value[0] === 'number' && typeof value[1] === 'number') return [value[1], value[0], ...value.slice(2)]
-  return value.map(toYandexCoordinateOrder)
-}
-
 function addUzbekistanBorder(ymaps: AnyObject, map: AnyObject, isAlive: () => boolean): void {
-  if (!ymaps.geoQuery) return
-  const add = (result: AnyObject, standardGeoJson = false) => {
+  if (!ymaps.Polyline) return
+  void getUzbekistanBorder().then((result: AnyObject) => {
     if (!isAlive()) return
-    const isGeoQueryResult = typeof result?.addToMap === 'function' && typeof result?.setOptions === 'function'
-    if (!isGeoQueryResult && !result?.features?.length) return
-    // Some Yandex builds may already pass a GeoQueryResult here. Wrapping it
-    // in a second geoQuery can corrupt the SDK's internal object bookkeeping.
-    const source = standardGeoJson ? { ...result, features: result.features.map((feature: AnyObject) => ({ ...feature, geometry: { ...feature.geometry, coordinates: toYandexCoordinateOrder(feature.geometry?.coordinates) } })) } : result
-    const border = isGeoQueryResult ? result : ymaps.geoQuery(source)
-    if (!isAlive()) return
-    border.setOptions({ fillOpacity: 0, strokeColor: '#ff1f47', strokeWidth: 6, strokeOpacity: 1, strokeStyle: 'dash' })
-    border.addToMap(map)
-  }
-  const fallback = async () => { try { add(await getUzbekistanBorder(), true) } catch { /* Yandex admin layer still shows the administrative border. */ } }
-  if (ymaps.borders?.load) void ymaps.borders.load('UZ', { lang: 'ru', quality: 2 }).then(add).catch(fallback)
-  else void fallback()
+    for (const feature of result?.features || []) {
+      const geometry = feature?.geometry
+      const polygons = geometry?.type === 'Polygon'
+        ? [geometry.coordinates]
+        : geometry?.type === 'MultiPolygon'
+          ? geometry.coordinates
+          : []
+      for (const polygon of polygons) {
+        for (const ring of polygon || []) {
+          const coordinates = (ring || [])
+            .filter((point: unknown) => Array.isArray(point) && Number.isFinite(point[0]) && Number.isFinite(point[1]))
+            .map(([lng, lat]: number[]) => [lat, lng])
+          if (!isAlive() || coordinates.length < 2) continue
+          map.geoObjects.add(new ymaps.Polyline(coordinates, {}, {
+            strokeColor: '#ff1f47',
+            strokeWidth: 5,
+            strokeOpacity: 0.95,
+            strokeStyle: 'shortdash',
+            zIndex: 850,
+          }))
+        }
+      }
+    }
+  }).catch(() => { /* The map remains usable when the optional border cannot load. */ })
 }
 
 export function YandexTransitMap({ apiKey, posts = empty, corridors = empty, selectedId, onCorridorSelect, loading }: { apiKey: string; posts?: FeatureCollection; corridors?: FeatureCollection; selectedId?: string | null; onCorridorSelect?: (properties: Record<string, unknown> | null) => void; loading?: boolean }) {
@@ -58,7 +63,7 @@ export function YandexTransitMap({ apiKey, posts = empty, corridors = empty, sel
     void loadYandexMaps(apiKey).then((ymaps) => {
       if (!live || !containerRef.current) return
       ymapsRef.current = ymaps
-      const map = new ymaps.Map(containerRef.current, { center: [41.2, 64.6], zoom: 5, type: 'yandex#map', controls: ['zoomControl', 'typeSelector'] }, { suppressMapOpenBlock: true, yandexMapType: 'admin' })
+      const map = new ymaps.Map(containerRef.current, { center: [41.2, 64.6], zoom: 5, controls: ['zoomControl', 'typeSelector'] }, { suppressMapOpenBlock: true })
       mapRef.current = map
       const isAlive = () => live && mapRef.current === map
       addUzbekistanBorder(ymaps, map, isAlive)
@@ -69,7 +74,7 @@ export function YandexTransitMap({ apiKey, posts = empty, corridors = empty, sel
       observer = new ResizeObserver(() => { if (isAlive()) map.container.fitToViewport() })
       observer.observe(containerRef.current)
       setReady(true)
-    }).catch(() => setReady(false))
+    }).catch(() => { if (live) setReady(false) })
     return () => { live = false; observer?.disconnect(); const map = mapRef.current; mapRef.current = null; ymapsRef.current = null; corridorObjects.current = null; postObjects.current = null; corridorLinesRef.current.clear(); try { map?.behaviors?.disable('drag') } catch { /* already inactive */ }; map?.destroy() }
   }, [apiKey])
 
@@ -157,13 +162,13 @@ export function YandexRouteBuilderMap({ apiKey, waypoints, geometry, posts = [],
     void loadYandexMaps(apiKey).then((ymaps) => {
       if (!live || !container.current) return
       ymapsRef.current = ymaps
-      const map = new ymaps.Map(container.current, { center: [41.2, 64.6], zoom: 5, type: 'yandex#map', controls: ['zoomControl', 'typeSelector'] }, { suppressMapOpenBlock: true, yandexMapType: 'admin' })
+      const map = new ymaps.Map(container.current, { center: [41.2, 64.6], zoom: 5, controls: ['zoomControl', 'typeSelector'] }, { suppressMapOpenBlock: true })
       mapRef.current = map; objectsRef.current = new ymaps.GeoObjectCollection(); map.geoObjects.add(objectsRef.current)
       const isAlive = () => live && mapRef.current === map
       addUzbekistanBorder(ymaps, map, isAlive)
       map.events.add('click', (event: AnyObject) => { if (!isAlive() || event.get('target') !== map) return; const [lat, lng] = event.get('coords'); onAddRef.current(lat, lng) })
       observer = new ResizeObserver(() => { if (isAlive()) map.container.fitToViewport() }); observer.observe(container.current); setReady(true)
-    })
+    }).catch(() => { if (live) setReady(false) })
     return () => { live = false; observer?.disconnect(); const map = mapRef.current; mapRef.current = null; ymapsRef.current = null; objectsRef.current = null; try { map?.behaviors?.disable('drag') } catch { /* already inactive */ }; map?.destroy() }
   }, [apiKey])
   useEffect(() => {
@@ -205,7 +210,7 @@ export function YandexLocationPicker({ apiKey, latitude, longitude, onChange }: 
       if (!live || !container.current) return
       ymapsRef.current = ymaps
       const hasPoint = latitude != null && longitude != null
-      const map = new ymaps.Map(container.current, { center: hasPoint ? [latitude, longitude] : [41.2, 64.6], zoom: hasPoint ? 9 : 5, type: 'yandex#map', controls: ['zoomControl', 'typeSelector'] }, { suppressMapOpenBlock: true, yandexMapType: 'admin' })
+      const map = new ymaps.Map(container.current, { center: hasPoint ? [latitude, longitude] : [41.2, 64.6], zoom: hasPoint ? 9 : 5, controls: ['zoomControl', 'typeSelector'] }, { suppressMapOpenBlock: true })
       mapRef.current = map
       const isAlive = () => live && mapRef.current === map
       addUzbekistanBorder(ymaps, map, isAlive)
@@ -222,7 +227,7 @@ export function YandexLocationPicker({ apiKey, latitude, longitude, onChange }: 
       if (hasPoint) setMarker(latitude!, longitude!)
       map.events.add('click', (event: AnyObject) => { if (!isAlive() || event.get('target') !== map) return; const [lat, lng] = event.get('coords'); setMarker(lat, lng); onChangeRef.current(lat, lng) })
       observer = new ResizeObserver(() => { if (isAlive()) map.container.fitToViewport() }); observer.observe(container.current)
-    })
+    }).catch(() => { /* The coordinate form remains available if Yandex cannot initialize. */ })
     return () => { live = false; observer?.disconnect(); const map = mapRef.current; mapRef.current = null; markerRef.current = null; ymapsRef.current = null; try { map?.behaviors?.disable('drag') } catch { /* already inactive */ }; map?.destroy() }
   }, [apiKey])
   useEffect(() => {
