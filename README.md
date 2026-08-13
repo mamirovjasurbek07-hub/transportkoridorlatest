@@ -96,6 +96,8 @@ Public sahifa dastlab corridor chizmasdan faqat bojxona postlarini ko‘rsatadi.
 
 Davlat filtri ikki bosqichli ishlaydi: avval boshlanish davlati tanlanadi, so‘ng faqat shu davlat uchun bazada mavjud tugash davlatlari chiqadi. `Qo‘llash` tanlangan davlat juftligini bitta yo‘nalish guruhi sifatida ochadi va guruhdagi barcha alternativ corridorlarni xaritada ko‘rsatadi. Chegara GeoJSON’i brauzerdan GitHub’ga so‘ralmaydi; backend proxy orqali olinib 24 soat keshlanadi.
 
+Chegara proxy Git LFS pointer faylini emas, `media.githubusercontent.com` dagi haqiqiy GeoJSON faylini oladi. Tashqi manbalar vaqtincha ishlamasa endpoint 503 bermaydi va xarita Yandex ma’muriy chegarasi bilan ishlashda davom etadi. Corridor create/update commitidan keyin obyekt explicit async so‘rov bilan qayta yuklanadi; bu SQLAlchemy `MissingGreenlet` xatosining oldini oladi.
+
 Admin sahifada:
 
 1. `Bojxona postlari` bo‘limida yangi post yarating. Xaritani bosing yoki `41.310617600000036, 69.21984867557755` formatida koordinatani bitta maydonga kiriting — marker va fokus darhol yangilanadi. CHBP uchun yengil va/yoki yuk transporti ruxsatini belgilang. Mavjud post koordinatasi o‘zgarsa bog‘langan faol yo‘laklar qayta hisoblanadi.
