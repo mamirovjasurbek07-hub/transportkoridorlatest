@@ -7,15 +7,28 @@ type AnyObject = Record<string, any>
 
 const empty: FeatureCollection = { type: 'FeatureCollection', features: [] }
 
-function addUzbekistanBorder(ymaps: AnyObject, map: AnyObject): void {
+function toYandexCoordinateOrder(value: unknown): unknown {
+  if (!Array.isArray(value)) return value
+  if (value.length >= 2 && typeof value[0] === 'number' && typeof value[1] === 'number') return [value[1], value[0], ...value.slice(2)]
+  return value.map(toYandexCoordinateOrder)
+}
+
+function addUzbekistanBorder(ymaps: AnyObject, map: AnyObject, isAlive: () => boolean): void {
   if (!ymaps.geoQuery) return
-  const add = (result: AnyObject) => {
-    const border = ymaps.geoQuery(result)
+  const add = (result: AnyObject, standardGeoJson = false) => {
+    if (!isAlive()) return
+    const isGeoQueryResult = typeof result?.addToMap === 'function' && typeof result?.setOptions === 'function'
+    if (!isGeoQueryResult && !result?.features?.length) return
+    // Some Yandex builds may already pass a GeoQueryResult here. Wrapping it
+    // in a second geoQuery can corrupt the SDK's internal object bookkeeping.
+    const source = standardGeoJson ? { ...result, features: result.features.map((feature: AnyObject) => ({ ...feature, geometry: { ...feature.geometry, coordinates: toYandexCoordinateOrder(feature.geometry?.coordinates) } })) } : result
+    const border = isGeoQueryResult ? result : ymaps.geoQuery(source)
+    if (!isAlive()) return
     border.setOptions({ fillOpacity: 0, strokeColor: '#ff1f47', strokeWidth: 6, strokeOpacity: 1, strokeStyle: 'dash' })
     border.addToMap(map)
   }
-  const fallback = async () => { try { add(await getUzbekistanBorder()) } catch { /* Yandex admin layer still shows the administrative border. */ } }
-  if (ymaps.borders?.load) void ymaps.borders.load('UZ', { lang: 'ru', quality: 2 }).then(add, fallback)
+  const fallback = async () => { try { add(await getUzbekistanBorder(), true) } catch { /* Yandex admin layer still shows the administrative border. */ } }
+  if (ymaps.borders?.load) void ymaps.borders.load('UZ', { lang: 'ru', quality: 2 }).then(add).catch(fallback)
   else void fallback()
 }
 
@@ -25,6 +38,7 @@ export function YandexTransitMap({ apiKey, posts = empty, corridors = empty, sel
   const ymapsRef = useRef<AnyObject | null>(null)
   const corridorObjects = useRef<AnyObject | null>(null)
   const postObjects = useRef<AnyObject | null>(null)
+  const corridorLinesRef = useRef<Map<string, { line: AnyObject; color: string; width: number }>>(new Map())
   const lastFitKeyRef = useRef('')
   const [ready, setReady] = useState(false)
   const [fullscreen, setFullscreen] = useState(false)
@@ -40,21 +54,23 @@ export function YandexTransitMap({ apiKey, posts = empty, corridors = empty, sel
   useEffect(() => {
     let live = true
     let observer: ResizeObserver | undefined
+    setReady(false)
     void loadYandexMaps(apiKey).then((ymaps) => {
       if (!live || !containerRef.current) return
       ymapsRef.current = ymaps
       const map = new ymaps.Map(containerRef.current, { center: [41.2, 64.6], zoom: 5, type: 'yandex#map', controls: ['zoomControl', 'typeSelector'] }, { suppressMapOpenBlock: true, yandexMapType: 'admin' })
       mapRef.current = map
-      addUzbekistanBorder(ymaps, map)
+      const isAlive = () => live && mapRef.current === map
+      addUzbekistanBorder(ymaps, map, isAlive)
       corridorObjects.current = new ymaps.GeoObjectCollection()
       postObjects.current = new ymaps.GeoObjectCollection()
       map.geoObjects.add(corridorObjects.current)
       map.geoObjects.add(postObjects.current)
-      observer = new ResizeObserver(() => map.container.fitToViewport())
+      observer = new ResizeObserver(() => { if (isAlive()) map.container.fitToViewport() })
       observer.observe(containerRef.current)
       setReady(true)
     }).catch(() => setReady(false))
-    return () => { live = false; observer?.disconnect(); mapRef.current?.destroy(); mapRef.current = null }
+    return () => { live = false; observer?.disconnect(); const map = mapRef.current; mapRef.current = null; ymapsRef.current = null; corridorObjects.current = null; postObjects.current = null; corridorLinesRef.current.clear(); try { map?.behaviors?.disable('drag') } catch { /* already inactive */ }; map?.destroy() }
   }, [apiKey])
 
   useEffect(() => {
@@ -62,21 +78,22 @@ export function YandexTransitMap({ apiKey, posts = empty, corridors = empty, sel
     const collection = corridorObjects.current
     if (!ready || !ymaps || !collection) return
     collection.removeAll()
+    corridorLinesRef.current.clear()
     const bounds: number[][] = []
     for (const feature of corridors.features) {
       if (feature.geometry.type !== 'LineString') continue
       const properties = feature.properties || {}
-      const coordinates = feature.geometry.coordinates.map(([lng, lat]) => [lat, lng])
+      const coordinates = feature.geometry.coordinates.filter(([lng, lat]) => Number.isFinite(lng) && Number.isFinite(lat)).map(([lng, lat]) => [lat, lng])
+      if (coordinates.length < 2) continue
       coordinates.forEach((point) => bounds.push(point))
-      const selected = properties.id === selectedId
       const color = String(properties.color || '#22d3ee')
       const flow = Number(properties.declaration_count || 0)
       const width = flow >= 1000 ? 9 : flow >= 100 ? 7 : flow >= 10 ? 5 : 4
-      const glow = new ymaps.Polyline(coordinates, {}, { strokeColor: color, strokeWidth: width + 9, strokeOpacity: .18 })
-      const line = new ymaps.Polyline(coordinates, {}, { strokeColor: selected ? '#ffffff' : color, strokeWidth: selected ? width + 3 : width, strokeOpacity: 0.94 })
+      const id = String(properties.id || '')
+      const line = new ymaps.Polyline(coordinates, {}, { strokeColor: color, strokeWidth: width, strokeOpacity: 0.94 })
       line.events.add('click', () => onCorridorSelect?.(properties as Record<string, unknown>))
-      glow.events.add('click', () => onCorridorSelect?.(properties as Record<string, unknown>))
-      collection.add(glow); collection.add(line)
+      collection.add(line)
+      corridorLinesRef.current.set(id, { line, color, width })
     }
     const fitKey = corridors.features.map((feature) => String(feature.properties?.id || '')).join('|')
     if (bounds.length && fitKey !== lastFitKeyRef.current) {
@@ -84,7 +101,14 @@ export function YandexTransitMap({ apiKey, posts = empty, corridors = empty, sel
       mapRef.current?.setBounds([[Math.min(...lats), Math.min(...lngs)], [Math.max(...lats), Math.max(...lngs)]], { checkZoomRange: true, zoomMargin: 70 })
     }
     lastFitKeyRef.current = fitKey
-  }, [corridors, onCorridorSelect, ready, selectedId])
+  }, [corridors, onCorridorSelect, ready])
+
+  useEffect(() => {
+    for (const [id, item] of corridorLinesRef.current) {
+      const selected = Boolean(selectedId) && id === selectedId
+      item.line.options.set({ strokeColor: selected ? '#ffffff' : item.color, strokeWidth: selected ? item.width + 3 : item.width, zIndex: selected ? 900 : 200 })
+    }
+  }, [selectedId, corridors, ready])
 
   useEffect(() => {
     const ymaps = ymapsRef.current
@@ -98,12 +122,11 @@ export function YandexTransitMap({ apiKey, posts = empty, corridors = empty, sel
       const permissions = [p.allow_passenger_vehicles ? 'Yengil transport' : '', p.allow_cargo_vehicles ? 'Yuk transporti' : ''].filter(Boolean).join(' · ')
       const balloon = `<div class="map-popup"><small>${safeHtml(p.post_type)}</small><strong>${safeHtml(p.post_code)} · ${safeHtml(p.post_name)}</strong><span>Kirish: ${safeHtml(p.entry_count || 0)} · Chiqish: ${safeHtml(p.exit_count || 0)}</span>${p.post_type === 'CHBP' ? `<span>Ruxsat: ${safeHtml(permissions || 'Belgilanmagan')}</span>` : ''}<b>Jami oqim: ${safeHtml(p.total_flow || 0)}</b></div>`
       const flow = Number(p.total_flow || 0)
-      const size = Math.round(12 + Math.min(14, Math.log10(flow + 1) * 4))
       const color = p.post_type === 'CHBP' ? '#fb4058' : p.post_type === 'PORT' ? '#34d399' : p.post_type === 'TIF' ? '#a78bfa' : '#38bdf8'
       const thousands = flow / 1000
       const label = flow >= 1000 ? `${Number(thousands.toFixed(thousands < 10 ? 1 : 0)).toLocaleString('uz-UZ')} ming` : flow > 0 ? flow.toLocaleString('uz-UZ') : ''
-      const sphere = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}"><defs><radialGradient id="g" cx="32%" cy="24%"><stop offset="0" stop-color="#fff" stop-opacity=".88"/><stop offset=".24" stop-color="${color}"/><stop offset=".78" stop-color="${color}"/><stop offset="1" stop-color="#061523"/></radialGradient></defs><circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 1.5}" fill="url(#g)" stroke="#fff" stroke-width="1"/><text x="50%" y="55%" text-anchor="middle" font-family="Arial,sans-serif" font-size="${label.length > 5 ? 4.7 : Math.max(5.5, Math.round(size / 4.2))}" font-weight="700" fill="#fff">${label}</text></svg>`
-      collection.add(new ymaps.Placemark([lat, lng], { balloonContent: balloon, hintContent: `${safeHtml(p.post_name)} · ${flow.toLocaleString('uz-UZ')} ta oqim` }, { iconLayout: 'default#image', iconImageHref: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(sphere)}`, iconImageSize: [size, size], iconImageOffset: [-size / 2, -size / 2], zIndex: 400 + flow }))
+      const preset = p.post_type === 'CHBP' ? 'islands#redCircleDotIcon' : p.post_type === 'PORT' ? 'islands#greenCircleDotIcon' : p.post_type === 'TIF' ? 'islands#violetCircleDotIcon' : 'islands#blueCircleDotIcon'
+      collection.add(new ymaps.Placemark([lat, lng], { balloonContent: balloon, hintContent: `${safeHtml(p.post_name)} · ${label || '0'} ta oqim` }, { preset, iconColor: color, zIndex: 400 + Math.min(flow, 10_000) }))
     }
   }, [posts, ready])
 
@@ -130,16 +153,18 @@ export function YandexRouteBuilderMap({ apiKey, waypoints, geometry, posts = [],
   const [ready, setReady] = useState(false)
   useEffect(() => {
     let live = true; let observer: ResizeObserver | undefined
+    setReady(false)
     void loadYandexMaps(apiKey).then((ymaps) => {
       if (!live || !container.current) return
       ymapsRef.current = ymaps
       const map = new ymaps.Map(container.current, { center: [41.2, 64.6], zoom: 5, type: 'yandex#map', controls: ['zoomControl', 'typeSelector'] }, { suppressMapOpenBlock: true, yandexMapType: 'admin' })
       mapRef.current = map; objectsRef.current = new ymaps.GeoObjectCollection(); map.geoObjects.add(objectsRef.current)
-      addUzbekistanBorder(ymaps, map)
-      map.events.add('click', (event: AnyObject) => { if (event.get('target') !== map) return; const [lat, lng] = event.get('coords'); onAddRef.current(lat, lng) })
-      observer = new ResizeObserver(() => map.container.fitToViewport()); observer.observe(container.current); setReady(true)
+      const isAlive = () => live && mapRef.current === map
+      addUzbekistanBorder(ymaps, map, isAlive)
+      map.events.add('click', (event: AnyObject) => { if (!isAlive() || event.get('target') !== map) return; const [lat, lng] = event.get('coords'); onAddRef.current(lat, lng) })
+      observer = new ResizeObserver(() => { if (isAlive()) map.container.fitToViewport() }); observer.observe(container.current); setReady(true)
     })
-    return () => { live = false; observer?.disconnect(); mapRef.current?.destroy(); mapRef.current = null }
+    return () => { live = false; observer?.disconnect(); const map = mapRef.current; mapRef.current = null; ymapsRef.current = null; objectsRef.current = null; try { map?.behaviors?.disable('drag') } catch { /* already inactive */ }; map?.destroy() }
   }, [apiKey])
   useEffect(() => {
     const ymaps = ymapsRef.current; const objects = objectsRef.current
@@ -182,8 +207,10 @@ export function YandexLocationPicker({ apiKey, latitude, longitude, onChange }: 
       const hasPoint = latitude != null && longitude != null
       const map = new ymaps.Map(container.current, { center: hasPoint ? [latitude, longitude] : [41.2, 64.6], zoom: hasPoint ? 9 : 5, type: 'yandex#map', controls: ['zoomControl', 'typeSelector'] }, { suppressMapOpenBlock: true, yandexMapType: 'admin' })
       mapRef.current = map
-      addUzbekistanBorder(ymaps, map)
+      const isAlive = () => live && mapRef.current === map
+      addUzbekistanBorder(ymaps, map, isAlive)
       const setMarker = (lat: number, lng: number) => {
+        if (!isAlive()) return
         const currentMarker = markerRef.current
         if (!currentMarker) {
           const marker = new ymaps.Placemark([lat, lng], {}, { preset: 'islands#redCircleDotIcon', draggable: true })
@@ -193,10 +220,10 @@ export function YandexLocationPicker({ apiKey, latitude, longitude, onChange }: 
         } else currentMarker.geometry.setCoordinates([lat, lng])
       }
       if (hasPoint) setMarker(latitude!, longitude!)
-      map.events.add('click', (event: AnyObject) => { if (event.get('target') !== map) return; const [lat, lng] = event.get('coords'); setMarker(lat, lng); onChangeRef.current(lat, lng) })
-      observer = new ResizeObserver(() => map.container.fitToViewport()); observer.observe(container.current)
+      map.events.add('click', (event: AnyObject) => { if (!isAlive() || event.get('target') !== map) return; const [lat, lng] = event.get('coords'); setMarker(lat, lng); onChangeRef.current(lat, lng) })
+      observer = new ResizeObserver(() => { if (isAlive()) map.container.fitToViewport() }); observer.observe(container.current)
     })
-    return () => { live = false; observer?.disconnect(); mapRef.current?.destroy(); mapRef.current = null }
+    return () => { live = false; observer?.disconnect(); const map = mapRef.current; mapRef.current = null; markerRef.current = null; ymapsRef.current = null; try { map?.behaviors?.disable('drag') } catch { /* already inactive */ }; map?.destroy() }
   }, [apiKey])
   useEffect(() => {
     const map = mapRef.current; const ymaps = ymapsRef.current
