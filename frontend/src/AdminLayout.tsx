@@ -1,5 +1,5 @@
-import { Activity, Database, FileClock, LogOut, MapPinned, Settings, Shield, Waypoints } from 'lucide-react'
-import { NavLink, useNavigate } from 'react-router-dom'
+import { Activity, Database, FileClock, LogOut, Map as MapIcon, MapPinned, Settings, Shield, Waypoints } from 'lucide-react'
+import { Link, NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from './auth'
 
 const links = [
@@ -24,7 +24,7 @@ export default function AdminLayout({ title, subtitle, actions, children }: { ti
         </button>
       </aside>
       <main className="admin-main">
-        <header className="admin-header"><div><p className="eyebrow">MA'MURIY BOSHQARUV</p><h1>{title}</h1>{subtitle && <p>{subtitle}</p>}</div><div className="header-actions">{actions}</div></header>
+        <header className="admin-header"><div><p className="eyebrow">MA'MURIY BOSHQARUV</p><h1>{title}</h1>{subtitle && <p>{subtitle}</p>}</div><div className="header-actions"><Link className="btn ghost compact admin-public-return" to="/"><MapIcon size={16}/><span>Bosh sahifa</span></Link>{actions}</div></header>
         <div className="admin-content">{children}</div>
       </main>
     </div>
