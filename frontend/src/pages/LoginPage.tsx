@@ -1,17 +1,19 @@
-import { useState } from 'react'
-import { Eye, EyeOff, LockKeyhole, Mail, ShieldCheck } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Eye, EyeOff, LoaderCircle, LockKeyhole, Mail, ShieldCheck } from 'lucide-react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth'
 import { ApiError } from '../api'
 
 export default function LoginPage() {
-  const { user, login, loading } = useAuth()
+  const { user, login, loading, checked, check } = useAuth()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [visible, setVisible] = useState(false)
   const [error, setError] = useState('')
   const navigate = useNavigate()
   const location = useLocation()
+  useEffect(() => { if (!checked) void check() }, [check, checked])
+  if (!checked) return <div className="screen-loader"><LoaderCircle className="spin"/> Sessiya tekshirilmoqda</div>
   if (user) return <Navigate to="/admin" replace />
   const submit = async (event: React.FormEvent) => {
     event.preventDefault(); setError('')
