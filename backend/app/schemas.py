@@ -131,7 +131,7 @@ class CorridorCreate(CorridorBase):
 
 
 class CorridorUpdate(BaseModel):
-    name: str | None = None
+    name: str | None = Field(default=None, min_length=3, max_length=255)
     origin_country_code: str | None = Field(default=None, min_length=2, max_length=2)
     destination_country_code: str | None = Field(default=None, min_length=2, max_length=2)
     entry_post_code: str | None = None
