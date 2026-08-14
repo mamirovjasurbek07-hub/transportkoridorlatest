@@ -25,10 +25,10 @@ function addUzbekistanBorder(ymaps: AnyObject, map: AnyObject, isAlive: () => bo
             .map(([lng, lat]: number[]) => [lat, lng])
           if (!isAlive() || coordinates.length < 2) continue
           map.geoObjects.add(new ymaps.Polyline(coordinates, {}, {
-            strokeColor: '#ff1f47',
-            strokeWidth: 5,
-            strokeOpacity: 0.95,
-            strokeStyle: 'shortdash',
+            strokeColor: '#78a4f5',
+            strokeWidth: 2,
+            strokeOpacity: 0.9,
+            strokeStyle: 'solid',
             zIndex: 850,
           }))
         }
