@@ -399,6 +399,16 @@ async def seed_demo_post_metrics(db: AsyncSession) -> int:
                     citizens_exit=weight * 44,
                     personal_inspections=max(1, weight // 5),
                 )
+            elif post_type == "RW":
+                common.update(
+                    empty_wagons_entry=weight * 4,
+                    empty_wagons_exit=weight * 3,
+                    loaded_wagons_entry=weight * 7,
+                    loaded_wagons_exit=weight * 6,
+                    citizens_entry=weight * 18,
+                    citizens_exit=weight * 17,
+                    customs_inspections=weight * 4,
+                )
             else:
                 common.update(
                     vehicles_entry=weight * 11,
