@@ -17,6 +17,7 @@ export interface CustomsPost {
   post_code: string
   post_name: string
   post_type: 'CHBP' | 'TIF' | 'AERO' | 'RW' | 'PORT'
+  post_category: 'UNASSIGNED' | 'EXTRA' | 'FIRST' | 'SECOND'
   region?: string
   neighbor_country_code?: string
   latitude?: number
