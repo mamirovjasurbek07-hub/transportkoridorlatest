@@ -148,6 +148,10 @@ async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, or
             PostDailyMetric.post_code,
             func.sum(PostDailyMetric.vehicles_entry).label("vehicles_entry"),
             func.sum(PostDailyMetric.vehicles_exit).label("vehicles_exit"),
+            func.sum(PostDailyMetric.empty_wagons_entry).label("empty_wagons_entry"),
+            func.sum(PostDailyMetric.empty_wagons_exit).label("empty_wagons_exit"),
+            func.sum(PostDailyMetric.loaded_wagons_entry).label("loaded_wagons_entry"),
+            func.sum(PostDailyMetric.loaded_wagons_exit).label("loaded_wagons_exit"),
             func.sum(PostDailyMetric.citizens_entry).label("citizens_entry"),
             func.sum(PostDailyMetric.citizens_exit).label("citizens_exit"),
             func.sum(PostDailyMetric.customs_inspections).label("customs_inspections"),
@@ -162,7 +166,8 @@ async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, or
     )).all()
     metrics_by_code = {row.post_code: row for row in metric_rows}
     metric_fields = (
-        "vehicles_entry", "vehicles_exit", "citizens_entry", "citizens_exit", "customs_inspections",
+        "vehicles_entry", "vehicles_exit", "empty_wagons_entry", "empty_wagons_exit",
+        "loaded_wagons_entry", "loaded_wagons_exit", "citizens_entry", "citizens_exit", "customs_inspections",
         "personal_inspections", "administrative_offenses", "criminal_cases", "narcotics_kg",
         "customs_payments", "cases_count", "additional_customs_payments",
     )
@@ -172,12 +177,16 @@ async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, or
         values = {field: float(getattr(metric, field) or 0) if field in {"narcotics_kg", "customs_payments", "additional_customs_payments"} else int(getattr(metric, field) or 0) for field in metric_fields} if metric else {field: 0 for field in metric_fields}
         declaration_entry = entry_counts.get(post.post_code, 0)
         declaration_exit = exit_counts.get(post.post_code, 0)
-        if post.post_type in {"CHBP", "RW", "PORT"} and not (values["vehicles_entry"] or values["vehicles_exit"]):
+        if post.post_type in {"CHBP", "PORT"} and not (values["vehicles_entry"] or values["vehicles_exit"]):
             values["vehicles_entry"] = declaration_entry
             values["vehicles_exit"] = declaration_exit
+        if post.post_type == "RW" and metric is None:
+            values["loaded_wagons_entry"] = declaration_entry
+            values["loaded_wagons_exit"] = declaration_exit
         total_flow = (
             values["cases_count"] if post.post_type == "TIF"
             else values["citizens_entry"] + values["citizens_exit"] if post.post_type == "AERO"
+            else values["empty_wagons_entry"] + values["empty_wagons_exit"] + values["loaded_wagons_entry"] + values["loaded_wagons_exit"] if post.post_type == "RW"
             else values["vehicles_entry"] + values["vehicles_exit"]
         )
         if post.post_type == "TIF":
