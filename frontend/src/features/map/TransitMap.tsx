@@ -70,7 +70,9 @@ function MapLibreTransitMap({ posts = empty, corridors = empty, selectedId, onCo
         if (!feature || feature.geometry.type !== 'Point') return
         const p = feature.properties || {}
         popupRef.current?.remove()
-        popupRef.current = new maplibregl.Popup({ offset: 14, closeButton, maxWidth: '440px', className: 'transit-popup' }).setLngLat(feature.geometry.coordinates as [number, number]).setHTML(postStatisticsHtml(p)).addTo(map)
+        const popup = new maplibregl.Popup({ offset: 14, closeButton, maxWidth: '520px', className: 'transit-popup' }).setLngLat(feature.geometry.coordinates as [number, number]).setHTML(postStatisticsHtml(p)).addTo(map)
+        popup.getElement()?.querySelector<HTMLButtonElement>('.passport-close')?.addEventListener('click', () => popup.remove())
+        popupRef.current = popup
       }
       map.on('click', 'post-points', (event) => showPostPopup(event, true))
       map.on('mouseenter', 'post-points', (event) => { map.getCanvas().style.cursor = 'pointer'; showPostPopup(event, false) })

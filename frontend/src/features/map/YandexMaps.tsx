@@ -26,7 +26,11 @@ function observeMapSize(container: HTMLElement, map: AnyObject, isAlive: () => b
 
 function numberText(value: unknown, digits = 0): string {
   const number = Number(value || 0)
-  return Number.isFinite(number) ? number.toLocaleString('uz-UZ', { maximumFractionDigits: digits }) : '0'
+  if (!Number.isFinite(number)) return '0'
+  const fixed = digits > 0 ? number.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '') : Math.round(number).toString()
+  const [whole, fraction] = fixed.split('.')
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ' ')
+  return fraction ? `${grouped}.${fraction}` : grouped
 }
 
 function moneyText(value: unknown): string {
@@ -72,7 +76,7 @@ export function postStatisticsHtml(p: Record<string, any>): string {
     mainContent = `<section class="passport-flow"><div class="passport-flow-head"><span>HARAKAT KO‘RSATKICHI</span><b>↙ KIRISH</b><b>↗ CHIQISH</b></div>${flowRows.join('')}</section><section class="passport-stat-grid">${[...specificCards, ...commonCards].join('')}</section>`
   }
   const permissions = type === 'CHBP' ? `<span class="passport-permission">${p.allow_passenger_vehicles ? '✓ Yengil' : ''}${p.allow_passenger_vehicles && p.allow_cargo_vehicles ? ' · ' : ''}${p.allow_cargo_vehicles ? '✓ Yuk' : ''}</span>` : ''
-  return `<div class="post-passport" style="--post-accent:${accent};--post-score:${rating * 3.6}deg"><header><div class="passport-heading"><span class="passport-emblem">⌖</span><div><small>BOJXONA POSTI PASPORTI</small><div><b>${safeHtml(type)}</b><em>${safeHtml(categoryText(p.post_category))}</em>${permissions}</div></div></div><div class="passport-score"><strong>${rating}</strong><small>BALL</small></div><h3>${safeHtml(p.post_name)}</h3><p><b>${safeHtml(p.post_code)}</b><span>${safeHtml(p.period_from)} — ${safeHtml(p.period_to)}</span></p></header>${mainContent}<footer><span>Tur bo‘yicha o‘rni</span><strong>#${safeHtml(p.ranking_position || '—')} <small>/ ${safeHtml(p.ranking_total || '—')} ta post</small></strong></footer></div>`
+  return `<div class="post-passport" data-post-id="${safeHtml(p.id)}" style="--post-accent:${accent};--post-score:${rating * 3.6}deg"><button type="button" class="passport-close" aria-label="Post pasportini yopish">×</button><header><div class="passport-heading"><span class="passport-emblem">⌖</span><div><small>BOJXONA POSTI PASPORTI</small><div><b>${safeHtml(type)}</b><em>${safeHtml(categoryText(p.post_category))}</em>${permissions}</div></div></div><div class="passport-score"><strong>${rating}</strong><small>UMUMIY BALL</small></div><h3>${safeHtml(p.post_name)}</h3><p><b>${safeHtml(p.post_code)}</b><span>${safeHtml(p.period_from)} — ${safeHtml(p.period_to)}</span></p></header>${mainContent}<footer class="passport-ranks"><article><span>Post turi bo‘yicha o‘rni</span><strong>#${safeHtml(p.ranking_position || '—')} <small>/ ${safeHtml(p.ranking_total || '—')}</small></strong><b>${safeHtml(Math.round(Number(p.type_ranking_score || 0)))} ball</b></article><article><span>Post toifasi bo‘yicha o‘rni</span><strong>#${safeHtml(p.category_ranking_position || '—')} <small>/ ${safeHtml(p.category_ranking_total || '—')}</small></strong><b>${safeHtml(Math.round(Number(p.category_ranking_score || 0)))} ball</b></article></footer></div>`
 }
 
 function sphereSize(p: Record<string, any>): number {
@@ -206,7 +210,12 @@ export function YandexTransitMap({ apiKey, posts = empty, corridors = empty, sel
       const flow = Number(p.total_flow || 0)
       const color = p.post_type === 'CHBP' ? '#fb4058' : p.post_type === 'PORT' ? '#34d399' : p.post_type === 'TIF' ? '#a78bfa' : '#38bdf8'
       const size = sphereSize(p)
-      collection.add(new ymaps.Placemark([lat, lng], { balloonContent: balloon, hintContent: balloon }, { iconLayout: 'default#image', iconImageHref: sphereIcon(size, color), iconImageSize: [size, size], iconImageOffset: [-size / 2, -size / 2], zIndex: 400 + Math.min(flow, 10_000) }))
+      const marker = new ymaps.Placemark([lat, lng], { balloonContent: balloon, hintContent: balloon }, { iconLayout: 'default#image', iconImageHref: sphereIcon(size, color), iconImageSize: [size, size], iconImageOffset: [-size / 2, -size / 2], zIndex: 400 + Math.min(flow, 10_000), balloonMinWidth: 500, balloonMaxWidth: 520, balloonMaxHeight: 560 })
+      marker.events.add('balloonopen', () => window.setTimeout(() => {
+        const close = document.querySelector(`[data-post-id="${String(p.id)}"] .passport-close`) as HTMLButtonElement | null
+        if (close) close.onclick = () => marker.balloon.close()
+      }, 0))
+      collection.add(marker)
     }
   }, [posts, ready])
 
