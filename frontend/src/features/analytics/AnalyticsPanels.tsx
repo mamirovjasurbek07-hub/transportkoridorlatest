@@ -1,6 +1,18 @@
-import { ArrowDownRight, ArrowUpRight, ChevronRight, Clock3, MapPinned, Route, ScanLine, TriangleAlert, Waypoints, X } from 'lucide-react'
+import { ArrowDownRight, ArrowUpRight, ChevronRight, Clock3, MapPinned, Route, ScanLine, TriangleAlert, Trophy, Waypoints, X } from 'lucide-react'
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import type { AnalyticsData, Corridor, FeatureCollection } from '../../types'
+
+export type RankingPostType = 'ALL' | 'CHBP' | 'AERO' | 'TIF' | 'RW' | 'PORT'
+
+const POST_TYPE_LABELS: Record<RankingPostType, string> = {
+  ALL: 'Barcha post turlari', CHBP: 'Avtomobil chegara postlari', AERO: 'Aeroport postlari', TIF: 'TIF postlari', RW: 'Temir yo‘l postlari', PORT: 'Daryo portlari',
+}
+
+export function PostRankingPanel({ posts, selectedType, onTypeChange }: { posts?: FeatureCollection; selectedType: RankingPostType; onTypeChange: (value: RankingPostType) => void }) {
+  const features = (posts?.features || []).filter((feature) => selectedType === 'ALL' || feature.properties.post_type === selectedType)
+  const ranking = [...features].sort((a, b) => Number(a.properties.ranking_position || 999) - Number(b.properties.ranking_position || 999)).slice(0, 5)
+  return <section className="post-ranking-panel"><div className="post-ranking-heading"><span><Trophy/><strong>Postlar reytingi</strong><small>Tanlangan davr va post turi bo‘yicha</small></span><select value={selectedType} onChange={(event) => onTypeChange(event.target.value as RankingPostType)}>{(Object.keys(POST_TYPE_LABELS) as RankingPostType[]).map((value) => <option value={value} key={value}>{POST_TYPE_LABELS[value]}</option>)}</select></div><div className="post-ranking-list">{ranking.map((feature, index) => { const p = feature.properties; return <div key={String(p.id)}><b>{index + 1}</b><span><strong>{String(p.post_code)} · {String(p.post_name)}</strong><small>{String(p.post_type)} · reyting balli {Number(p.ranking_score || 0).toLocaleString('uz-UZ', { maximumFractionDigits: 1 })}</small></span><em>{Number(p.total_flow || 0).toLocaleString('uz-UZ')}</em></div> })}{!ranking.length && <span className="muted">Tanlangan tur bo‘yicha ma’lumot yo‘q.</span>}</div></section>
+}
 
 
 export function KpiGrid({ data }: { data?: AnalyticsData }) {
