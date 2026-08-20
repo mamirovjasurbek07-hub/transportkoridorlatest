@@ -7,6 +7,76 @@ type AnyObject = Record<string, any>
 
 const empty: FeatureCollection = { type: 'FeatureCollection', features: [] }
 
+function observeMapSize(container: HTMLElement, map: AnyObject, isAlive: () => boolean): () => void {
+  let timer = 0
+  let width = Math.round(container.getBoundingClientRect().width)
+  let height = Math.round(container.getBoundingClientRect().height)
+  const observer = new ResizeObserver((entries) => {
+    const rect = entries[0]?.contentRect
+    if (!rect) return
+    const nextWidth = Math.round(rect.width); const nextHeight = Math.round(rect.height)
+    if (Math.abs(nextWidth - width) < 3 && Math.abs(nextHeight - height) < 3) return
+    width = nextWidth; height = nextHeight
+    window.clearTimeout(timer)
+    timer = window.setTimeout(() => { if (isAlive()) map.container.fitToViewport() }, 140)
+  })
+  observer.observe(container)
+  return () => { window.clearTimeout(timer); observer.disconnect() }
+}
+
+function numberText(value: unknown, digits = 0): string {
+  const number = Number(value || 0)
+  return Number.isFinite(number) ? number.toLocaleString('uz-UZ', { maximumFractionDigits: digits }) : '0'
+}
+
+function categoryText(value: unknown): string {
+  const labels: Record<string, string> = { EXTRA: 'Toifadan tashqari', FIRST: 'Birinchi toifa', SECOND: 'Ikkinchi toifa', UNASSIGNED: 'Toifa belgilanmagan' }
+  return labels[String(value)] || 'Toifa belgilanmagan'
+}
+
+export function postStatisticsHtml(p: Record<string, any>): string {
+  const row = (label: string, value: string) => `<span><i>${safeHtml(label)}</i><b>${safeHtml(value)}</b></span>`
+  const common = [
+    row('Ma’muriy huquqbuzarliklar', numberText(p.administrative_offenses)),
+    row('Jinoiy ishlar', numberText(p.criminal_cases)),
+    row('Giyohvandlik vositalari', `${numberText(p.narcotics_kg, 3)} kg`),
+  ]
+  let metrics: string[]
+  if (p.post_type === 'TIF') {
+    metrics = [
+      row('Undirilgan bojxona to‘lovlari', `${numberText(p.customs_payments, 0)} so‘m`),
+      row('Holatlar soni', numberText(p.cases_count)),
+      row('Qo‘shimcha undirilgan to‘lovlar', `${numberText(p.additional_customs_payments, 0)} so‘m`),
+      ...common,
+    ]
+  } else if (p.post_type === 'AERO') {
+    metrics = [
+      row('Fuqarolar — kirish', numberText(p.citizens_entry)), row('Fuqarolar — chiqish', numberText(p.citizens_exit)),
+      row('Shaxsiy ko‘riklar', numberText(p.personal_inspections)), ...common,
+    ]
+  } else {
+    metrics = [
+      row('Avtotransport — kirish', numberText(p.vehicles_entry)), row('Avtotransport — chiqish', numberText(p.vehicles_exit)),
+      row('Fuqarolar — kirish', numberText(p.citizens_entry)), row('Fuqarolar — chiqish', numberText(p.citizens_exit)),
+      row('Bojxona ko‘riklari', numberText(p.customs_inspections)), ...common,
+    ]
+  }
+  return `<div class="map-popup post-stat-popup"><small>${safeHtml(p.post_type)} · ${safeHtml(categoryText(p.post_category))}</small><strong>${safeHtml(p.post_code)} · ${safeHtml(p.post_name)}</strong><em>${safeHtml(p.period_from)} — ${safeHtml(p.period_to)}</em><div>${metrics.join('')}</div><footer>Reyting: ${safeHtml(p.ranking_position || '—')} / ${safeHtml(p.ranking_total || '—')}</footer></div>`
+}
+
+function sphereSize(p: Record<string, any>): number {
+  const rank = Number(p.ranking_position || 999)
+  const total = Math.max(1, Number(p.ranking_total || 1))
+  const strength = Math.max(0, 1 - (rank - 1) / total)
+  return Math.round(18 + strength * 16)
+}
+
+function sphereIcon(size: number, color: string): string {
+  const stroke = '#f8fdff'
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}"><defs><radialGradient id="g" cx="32%" cy="25%" r="72%"><stop offset="0" stop-color="#fff" stop-opacity=".95"/><stop offset=".22" stop-color="${color}" stop-opacity=".9"/><stop offset=".72" stop-color="${color}"/><stop offset="1" stop-color="#06111c"/></radialGradient><filter id="s"><feDropShadow dx="0" dy="2" stdDeviation="2" flood-opacity=".48"/></filter></defs><circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 2}" fill="url(#g)" stroke="${stroke}" stroke-width="1.4" filter="url(#s)"/></svg>`
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
+}
+
 function addUzbekistanBorder(ymaps: AnyObject, map: AnyObject, isAlive: () => boolean): void {
   if (!ymaps.Polyline) return
   void getUzbekistanBorder().then((result: AnyObject) => {
@@ -58,7 +128,7 @@ export function YandexTransitMap({ apiKey, posts = empty, corridors = empty, sel
 
   useEffect(() => {
     let live = true
-    let observer: ResizeObserver | undefined
+    let stopResize: (() => void) | undefined
     setReady(false)
     void loadYandexMaps(apiKey).then((ymaps) => {
       if (!live || !containerRef.current) return
@@ -71,11 +141,10 @@ export function YandexTransitMap({ apiKey, posts = empty, corridors = empty, sel
       postObjects.current = new ymaps.GeoObjectCollection()
       map.geoObjects.add(corridorObjects.current)
       map.geoObjects.add(postObjects.current)
-      observer = new ResizeObserver(() => { if (isAlive()) map.container.fitToViewport() })
-      observer.observe(containerRef.current)
+      stopResize = observeMapSize(containerRef.current, map, isAlive)
       setReady(true)
     }).catch(() => { if (live) setReady(false) })
-    return () => { live = false; observer?.disconnect(); const map = mapRef.current; mapRef.current = null; ymapsRef.current = null; corridorObjects.current = null; postObjects.current = null; corridorLinesRef.current.clear(); try { map?.behaviors?.disable('drag') } catch { /* already inactive */ }; map?.destroy() }
+    return () => { live = false; stopResize?.(); const map = mapRef.current; mapRef.current = null; ymapsRef.current = null; corridorObjects.current = null; postObjects.current = null; corridorLinesRef.current.clear(); try { map?.behaviors?.disable('drag') } catch { /* already inactive */ }; map?.destroy() }
   }, [apiKey])
 
   useEffect(() => {
@@ -124,14 +193,11 @@ export function YandexTransitMap({ apiKey, posts = empty, corridors = empty, sel
       if (feature.geometry.type !== 'Point') continue
       const [lng, lat] = feature.geometry.coordinates
       const p = feature.properties || {}
-      const permissions = [p.allow_passenger_vehicles ? 'Yengil transport' : '', p.allow_cargo_vehicles ? 'Yuk transporti' : ''].filter(Boolean).join(' · ')
-      const balloon = `<div class="map-popup"><small>${safeHtml(p.post_type)}</small><strong>${safeHtml(p.post_code)} · ${safeHtml(p.post_name)}</strong><span>Kirish: ${safeHtml(p.entry_count || 0)} · Chiqish: ${safeHtml(p.exit_count || 0)}</span>${p.post_type === 'CHBP' ? `<span>Ruxsat: ${safeHtml(permissions || 'Belgilanmagan')}</span>` : ''}<b>Jami oqim: ${safeHtml(p.total_flow || 0)}</b></div>`
+      const balloon = postStatisticsHtml(p)
       const flow = Number(p.total_flow || 0)
       const color = p.post_type === 'CHBP' ? '#fb4058' : p.post_type === 'PORT' ? '#34d399' : p.post_type === 'TIF' ? '#a78bfa' : '#38bdf8'
-      const thousands = flow / 1000
-      const label = flow >= 1000 ? `${Number(thousands.toFixed(thousands < 10 ? 1 : 0)).toLocaleString('uz-UZ')} ming` : flow > 0 ? flow.toLocaleString('uz-UZ') : ''
-      const preset = p.post_type === 'CHBP' ? 'islands#redCircleDotIcon' : p.post_type === 'PORT' ? 'islands#greenCircleDotIcon' : p.post_type === 'TIF' ? 'islands#violetCircleDotIcon' : 'islands#blueCircleDotIcon'
-      collection.add(new ymaps.Placemark([lat, lng], { balloonContent: balloon, hintContent: `${safeHtml(p.post_name)} · ${label || '0'} ta oqim` }, { preset, iconColor: color, zIndex: 400 + Math.min(flow, 10_000) }))
+      const size = sphereSize(p)
+      collection.add(new ymaps.Placemark([lat, lng], { balloonContent: balloon, hintContent: balloon }, { iconLayout: 'default#image', iconImageHref: sphereIcon(size, color), iconImageSize: [size, size], iconImageOffset: [-size / 2, -size / 2], zIndex: 400 + Math.min(flow, 10_000) }))
     }
   }, [posts, ready])
 
@@ -157,7 +223,7 @@ export function YandexRouteBuilderMap({ apiKey, waypoints, geometry, posts = [],
   onPostSelectRef.current = onPostSelect
   const [ready, setReady] = useState(false)
   useEffect(() => {
-    let live = true; let observer: ResizeObserver | undefined
+    let live = true; let stopResize: (() => void) | undefined
     setReady(false)
     void loadYandexMaps(apiKey).then((ymaps) => {
       if (!live || !container.current) return
@@ -167,9 +233,9 @@ export function YandexRouteBuilderMap({ apiKey, waypoints, geometry, posts = [],
       const isAlive = () => live && mapRef.current === map
       addUzbekistanBorder(ymaps, map, isAlive)
       map.events.add('click', (event: AnyObject) => { if (!isAlive() || event.get('target') !== map) return; const [lat, lng] = event.get('coords'); onAddRef.current(lat, lng) })
-      observer = new ResizeObserver(() => { if (isAlive()) map.container.fitToViewport() }); observer.observe(container.current); setReady(true)
+      stopResize = observeMapSize(container.current, map, isAlive); setReady(true)
     }).catch(() => { if (live) setReady(false) })
-    return () => { live = false; observer?.disconnect(); const map = mapRef.current; mapRef.current = null; ymapsRef.current = null; objectsRef.current = null; try { map?.behaviors?.disable('drag') } catch { /* already inactive */ }; map?.destroy() }
+    return () => { live = false; stopResize?.(); const map = mapRef.current; mapRef.current = null; ymapsRef.current = null; objectsRef.current = null; try { map?.behaviors?.disable('drag') } catch { /* already inactive */ }; map?.destroy() }
   }, [apiKey])
   useEffect(() => {
     const ymaps = ymapsRef.current; const objects = objectsRef.current
@@ -202,10 +268,10 @@ export function YandexRouteBuilderMap({ apiKey, waypoints, geometry, posts = [],
 }
 
 export function YandexLocationPicker({ apiKey, latitude, longitude, onChange }: { apiKey: string; latitude?: number; longitude?: number; onChange: (lat: number, lng: number) => void }) {
-  const container = useRef<HTMLDivElement>(null); const mapRef = useRef<AnyObject | null>(null); const markerRef = useRef<AnyObject | null>(null); const ymapsRef = useRef<AnyObject | null>(null); const onChangeRef = useRef(onChange)
+  const container = useRef<HTMLDivElement>(null); const mapRef = useRef<AnyObject | null>(null); const markerRef = useRef<AnyObject | null>(null); const ymapsRef = useRef<AnyObject | null>(null); const onChangeRef = useRef(onChange); const internalChangeRef = useRef(false)
   onChangeRef.current = onChange
   useEffect(() => {
-    let live = true; let observer: ResizeObserver | undefined
+    let live = true; let stopResize: (() => void) | undefined
     void loadYandexMaps(apiKey).then((ymaps) => {
       if (!live || !container.current) return
       ymapsRef.current = ymaps
@@ -220,15 +286,15 @@ export function YandexLocationPicker({ apiKey, latitude, longitude, onChange }: 
         if (!currentMarker) {
           const marker = new ymaps.Placemark([lat, lng], {}, { preset: 'islands#redCircleDotIcon', draggable: true })
           markerRef.current = marker
-          marker.events.add('dragend', () => { const [nextLat, nextLng] = marker.geometry.getCoordinates(); onChangeRef.current(nextLat, nextLng) })
+          marker.events.add('dragend', () => { const [nextLat, nextLng] = marker.geometry.getCoordinates(); internalChangeRef.current = true; onChangeRef.current(nextLat, nextLng) })
           map.geoObjects.add(marker)
         } else currentMarker.geometry.setCoordinates([lat, lng])
       }
       if (hasPoint) setMarker(latitude!, longitude!)
-      map.events.add('click', (event: AnyObject) => { if (!isAlive() || event.get('target') !== map) return; const [lat, lng] = event.get('coords'); setMarker(lat, lng); onChangeRef.current(lat, lng) })
-      observer = new ResizeObserver(() => { if (isAlive()) map.container.fitToViewport() }); observer.observe(container.current)
+      map.events.add('click', (event: AnyObject) => { if (!isAlive() || event.get('target') !== map) return; const [lat, lng] = event.get('coords'); setMarker(lat, lng); internalChangeRef.current = true; onChangeRef.current(lat, lng) })
+      stopResize = observeMapSize(container.current, map, isAlive)
     }).catch(() => { /* The coordinate form remains available if Yandex cannot initialize. */ })
-    return () => { live = false; observer?.disconnect(); const map = mapRef.current; mapRef.current = null; markerRef.current = null; ymapsRef.current = null; try { map?.behaviors?.disable('drag') } catch { /* already inactive */ }; map?.destroy() }
+    return () => { live = false; stopResize?.(); const map = mapRef.current; mapRef.current = null; markerRef.current = null; ymapsRef.current = null; try { map?.behaviors?.disable('drag') } catch { /* already inactive */ }; map?.destroy() }
   }, [apiKey])
   useEffect(() => {
     const map = mapRef.current; const ymaps = ymapsRef.current
@@ -237,10 +303,11 @@ export function YandexLocationPicker({ apiKey, latitude, longitude, onChange }: 
     if (!currentMarker) {
       const marker = new ymaps.Placemark([latitude, longitude], {}, { preset: 'islands#redCircleDotIcon', draggable: true })
       markerRef.current = marker
-      marker.events.add('dragend', () => { const [nextLat, nextLng] = marker.geometry.getCoordinates(); onChangeRef.current(nextLat, nextLng) })
+      marker.events.add('dragend', () => { const [nextLat, nextLng] = marker.geometry.getCoordinates(); internalChangeRef.current = true; onChangeRef.current(nextLat, nextLng) })
       map.geoObjects.add(marker)
     } else currentMarker.geometry.setCoordinates([latitude, longitude])
-    map.setCenter([latitude, longitude], Math.max(map.getZoom(), 10), { duration: 500 })
+    if (internalChangeRef.current) internalChangeRef.current = false
+    else map.setCenter([latitude, longitude], Math.max(map.getZoom(), 10), { duration: 0 })
   }, [latitude, longitude])
   return <div className="location-picker yandex-map" ref={container} aria-label="Yandex xaritasidan post lokatsiyasini tanlash" />
 }

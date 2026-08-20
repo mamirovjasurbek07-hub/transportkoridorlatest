@@ -5,7 +5,7 @@ import { LocateFixed, Maximize2, Minimize2 } from 'lucide-react'
 import type { FeatureCollection } from '../../types'
 import { getMapStyle } from './mapStyle'
 import { getUzbekistanBorder, useMapProvider } from './mapProvider'
-import { YandexTransitMap } from './YandexMaps'
+import { postStatisticsHtml, YandexTransitMap } from './YandexMaps'
 
 interface Props {
   posts?: FeatureCollection
@@ -21,7 +21,6 @@ function MapLibreTransitMap({ posts = empty, corridors = empty, selectedId, onCo
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<Map | null>(null)
   const popupRef = useRef<Popup | null>(null)
-  const frameRef = useRef<number>(0)
   const [ready, setReady] = useState(false)
   const [fullscreen, setFullscreen] = useState(false)
 
@@ -49,8 +48,10 @@ function MapLibreTransitMap({ posts = empty, corridors = empty, selectedId, onCo
       map.addSource('posts', { type: 'geojson', data: empty, cluster: true, clusterRadius: 42, clusterMaxZoom: 4 })
       map.addLayer({ id: 'post-clusters', type: 'circle', source: 'posts', filter: ['has', 'point_count'], paint: { 'circle-color': '#102f4f', 'circle-radius': ['step', ['get', 'point_count'], 16, 10, 21, 30, 27], 'circle-stroke-width': 2, 'circle-stroke-color': '#38bdf8' } })
       map.addLayer({ id: 'cluster-count', type: 'symbol', source: 'posts', filter: ['has', 'point_count'], layout: { 'text-field': ['get', 'point_count_abbreviated'], 'text-size': 12 }, paint: { 'text-color': '#e8f7ff' } })
-      map.addLayer({ id: 'post-flow-glow', type: 'circle', source: 'posts', filter: ['!', ['has', 'point_count']], paint: { 'circle-color': ['match', ['get', 'post_type'], 'CHBP', '#fb4058', 'AERO', '#fbbf24', 'RW', '#a78bfa', 'PORT', '#34d399', '#38bdf8'], 'circle-radius': ['interpolate', ['linear'], ['get', 'total_flow'], 0, 6, 100, 9, 1000, 13, 10000, 16], 'circle-blur': .7, 'circle-opacity': .28 } })
-      map.addLayer({ id: 'post-points', type: 'circle', source: 'posts', filter: ['!', ['has', 'point_count']], paint: { 'circle-color': ['match', ['get', 'post_type'], 'CHBP', '#fb4058', 'AERO', '#fbbf24', 'RW', '#a78bfa', 'PORT', '#34d399', '#38bdf8'], 'circle-radius': ['interpolate', ['linear'], ['get', 'total_flow'], 0, 4, 100, 6, 1000, 9, 10000, 12], 'circle-stroke-width': 1.4, 'circle-stroke-color': '#e8fdff' } })
+      const rankRadius: any = ['step', ['coalesce', ['get', 'ranking_position'], 999], 7, 2, 13, 4, 11, 11, 9, 21, 7]
+      map.addLayer({ id: 'post-flow-glow', type: 'circle', source: 'posts', filter: ['!', ['has', 'point_count']], paint: { 'circle-color': ['match', ['get', 'post_type'], 'CHBP', '#fb4058', 'AERO', '#fbbf24', 'RW', '#a78bfa', 'PORT', '#34d399', '#38bdf8'], 'circle-radius': ['*', rankRadius, 1.65], 'circle-blur': .72, 'circle-opacity': .32 } })
+      map.addLayer({ id: 'post-points', type: 'circle', source: 'posts', filter: ['!', ['has', 'point_count']], paint: { 'circle-color': ['match', ['get', 'post_type'], 'CHBP', '#fb4058', 'AERO', '#fbbf24', 'RW', '#a78bfa', 'PORT', '#34d399', '#38bdf8'], 'circle-radius': rankRadius, 'circle-stroke-width': 1.4, 'circle-stroke-color': '#f8fdff' } })
+      map.addLayer({ id: 'post-sphere-highlight', type: 'circle', source: 'posts', filter: ['!', ['has', 'point_count']], paint: { 'circle-color': '#ffffff', 'circle-radius': 2.1, 'circle-translate': [-3, -3], 'circle-opacity': .78, 'circle-blur': .15 } })
 
       void getUzbekistanBorder()
         .then((border) => {
@@ -64,14 +65,16 @@ function MapLibreTransitMap({ posts = empty, corridors = empty, selectedId, onCo
       map.on('click', 'corridor-core', corridorClick)
       map.on('mouseenter', 'corridor-core', () => { map.getCanvas().style.cursor = 'pointer'; map.setPaintProperty('corridor-glow', 'line-opacity', 0.7) })
       map.on('mouseleave', 'corridor-core', () => { map.getCanvas().style.cursor = ''; map.setPaintProperty('corridor-glow', 'line-opacity', 0.46) })
-      map.on('click', 'post-points', (event) => {
+      const showPostPopup = (event: MapLayerMouseEvent, closeButton: boolean) => {
         const feature = event.features?.[0]
         if (!feature || feature.geometry.type !== 'Point') return
         const p = feature.properties || {}
         popupRef.current?.remove()
-        const permissions = [p.allow_passenger_vehicles ? 'Yengil transport' : '', p.allow_cargo_vehicles ? 'Yuk transporti' : ''].filter(Boolean).join(' · ')
-        popupRef.current = new maplibregl.Popup({ offset: 12, className: 'transit-popup' }).setLngLat(feature.geometry.coordinates as [number, number]).setHTML(`<div class="map-popup"><small>${p.post_type || ''}</small><strong>${p.post_code} · ${p.post_name}</strong><span>Kirish: ${p.entry_count || 0} · Chiqish: ${p.exit_count || 0}</span>${p.post_type === 'CHBP' ? `<span>Ruxsat: ${permissions || 'Belgilanmagan'}</span>` : ''}<b>Jami oqim: ${p.total_flow || 0}</b></div>`).addTo(map)
-      })
+        popupRef.current = new maplibregl.Popup({ offset: 14, closeButton, className: 'transit-popup' }).setLngLat(feature.geometry.coordinates as [number, number]).setHTML(postStatisticsHtml(p)).addTo(map)
+      }
+      map.on('click', 'post-points', (event) => showPostPopup(event, true))
+      map.on('mouseenter', 'post-points', (event) => { map.getCanvas().style.cursor = 'pointer'; showPostPopup(event, false) })
+      map.on('mouseleave', 'post-points', () => { map.getCanvas().style.cursor = ''; popupRef.current?.remove(); popupRef.current = null })
       map.on('click', 'post-clusters', async (event) => {
         const feature = event.features?.[0]
         const clusterId = feature?.properties?.cluster_id
@@ -81,9 +84,11 @@ function MapLibreTransitMap({ posts = empty, corridors = empty, selectedId, onCo
       })
       setReady(true)
     })
-    const resize = new ResizeObserver(() => map.resize())
+    let resizeTimer = 0
+    let lastWidth = Math.round(containerRef.current.getBoundingClientRect().width); let lastHeight = Math.round(containerRef.current.getBoundingClientRect().height)
+    const resize = new ResizeObserver(([entry]) => { const width = Math.round(entry.contentRect.width); const height = Math.round(entry.contentRect.height); if (Math.abs(width - lastWidth) < 3 && Math.abs(height - lastHeight) < 3) return; lastWidth = width; lastHeight = height; window.clearTimeout(resizeTimer); resizeTimer = window.setTimeout(() => map.resize(), 140) })
     resize.observe(containerRef.current)
-    return () => { resize.disconnect(); cancelAnimationFrame(frameRef.current); popupRef.current?.remove(); map.remove(); mapRef.current = null }
+    return () => { resize.disconnect(); window.clearTimeout(resizeTimer); popupRef.current?.remove(); map.remove(); mapRef.current = null }
   }, [onCorridorSelect])
 
   useEffect(() => { if (ready) (mapRef.current?.getSource('posts') as GeoJSONSource)?.setData(posts) }, [posts, ready])
@@ -96,16 +101,6 @@ function MapLibreTransitMap({ posts = empty, corridors = empty, selectedId, onCo
     }
   }, [corridors, ready])
   useEffect(() => { if (ready) mapRef.current?.setFilter('selected-corridor', ['==', ['get', 'id'], selectedId || '']) }, [selectedId, ready])
-  useEffect(() => {
-    if (!ready || window.matchMedia('(prefers-reduced-motion: reduce)').matches || corridors.features.length > 100) return
-    let phase = 0
-    const animate = () => {
-      if (!document.hidden) { phase = (phase + 0.04) % 3.1; mapRef.current?.setPaintProperty('corridor-flow', 'line-dasharray', [0.7 + phase, 2.4, Math.max(0.1, 3.1 - phase), 0.1]) }
-      frameRef.current = requestAnimationFrame(animate)
-    }
-    frameRef.current = requestAnimationFrame(animate)
-    return () => cancelAnimationFrame(frameRef.current)
-  }, [ready, corridors.features.length])
 
   return (
     <div className={`transit-map ${fullscreen ? 'is-fullscreen' : ''}`}>
