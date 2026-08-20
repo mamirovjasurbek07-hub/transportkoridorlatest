@@ -48,7 +48,7 @@ function MapLibreTransitMap({ posts = empty, corridors = empty, selectedId, onCo
       map.addSource('posts', { type: 'geojson', data: empty, cluster: true, clusterRadius: 42, clusterMaxZoom: 4 })
       map.addLayer({ id: 'post-clusters', type: 'circle', source: 'posts', filter: ['has', 'point_count'], paint: { 'circle-color': '#102f4f', 'circle-radius': ['step', ['get', 'point_count'], 16, 10, 21, 30, 27], 'circle-stroke-width': 2, 'circle-stroke-color': '#38bdf8' } })
       map.addLayer({ id: 'cluster-count', type: 'symbol', source: 'posts', filter: ['has', 'point_count'], layout: { 'text-field': ['get', 'point_count_abbreviated'], 'text-size': 12 }, paint: { 'text-color': '#e8f7ff' } })
-      const rankRadius: any = ['step', ['coalesce', ['get', 'ranking_position'], 999], 7, 2, 13, 4, 11, 11, 9, 21, 7]
+      const rankRadius: any = ['interpolate', ['linear'], ['coalesce', ['get', 'ranking_score'], 0], 0, 7, 100, 15]
       map.addLayer({ id: 'post-flow-glow', type: 'circle', source: 'posts', filter: ['!', ['has', 'point_count']], paint: { 'circle-color': ['match', ['get', 'post_type'], 'CHBP', '#fb4058', 'AERO', '#fbbf24', 'RW', '#a78bfa', 'PORT', '#34d399', '#38bdf8'], 'circle-radius': ['*', rankRadius, 1.65], 'circle-blur': .72, 'circle-opacity': .32 } })
       map.addLayer({ id: 'post-points', type: 'circle', source: 'posts', filter: ['!', ['has', 'point_count']], paint: { 'circle-color': ['match', ['get', 'post_type'], 'CHBP', '#fb4058', 'AERO', '#fbbf24', 'RW', '#a78bfa', 'PORT', '#34d399', '#38bdf8'], 'circle-radius': rankRadius, 'circle-stroke-width': 1.4, 'circle-stroke-color': '#f8fdff' } })
       map.addLayer({ id: 'post-sphere-highlight', type: 'circle', source: 'posts', filter: ['!', ['has', 'point_count']], paint: { 'circle-color': '#ffffff', 'circle-radius': 2.1, 'circle-translate': [-3, -3], 'circle-opacity': .78, 'circle-blur': .15 } })
@@ -70,7 +70,7 @@ function MapLibreTransitMap({ posts = empty, corridors = empty, selectedId, onCo
         if (!feature || feature.geometry.type !== 'Point') return
         const p = feature.properties || {}
         popupRef.current?.remove()
-        popupRef.current = new maplibregl.Popup({ offset: 14, closeButton, className: 'transit-popup' }).setLngLat(feature.geometry.coordinates as [number, number]).setHTML(postStatisticsHtml(p)).addTo(map)
+        popupRef.current = new maplibregl.Popup({ offset: 14, closeButton, maxWidth: '440px', className: 'transit-popup' }).setLngLat(feature.geometry.coordinates as [number, number]).setHTML(postStatisticsHtml(p)).addTo(map)
       }
       map.on('click', 'post-points', (event) => showPostPopup(event, true))
       map.on('mouseenter', 'post-points', (event) => { map.getCanvas().style.cursor = 'pointer'; showPostPopup(event, false) })

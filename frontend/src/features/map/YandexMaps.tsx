@@ -29,46 +29,55 @@ function numberText(value: unknown, digits = 0): string {
   return Number.isFinite(number) ? number.toLocaleString('uz-UZ', { maximumFractionDigits: digits }) : '0'
 }
 
+function moneyText(value: unknown): string {
+  const amount = Number(value || 0)
+  if (!Number.isFinite(amount)) return '0 so‘m'
+  if (amount >= 1_000_000_000_000) return `${numberText(amount / 1_000_000_000_000, 2)} trln so‘m`
+  if (amount >= 1_000_000_000) return `${numberText(amount / 1_000_000_000, 1)} mlrd so‘m`
+  if (amount >= 1_000_000) return `${numberText(amount / 1_000_000, 1)} mln so‘m`
+  return `${numberText(amount)} so‘m`
+}
+
 function categoryText(value: unknown): string {
   const labels: Record<string, string> = { EXTRA: 'Toifadan tashqari', FIRST: 'Birinchi toifa', SECOND: 'Ikkinchi toifa', UNASSIGNED: 'Toifa belgilanmagan' }
   return labels[String(value)] || 'Toifa belgilanmagan'
 }
 
 export function postStatisticsHtml(p: Record<string, any>): string {
-  const row = (label: string, value: string) => `<span><i>${safeHtml(label)}</i><b>${safeHtml(value)}</b></span>`
-  const common = [
-    row('Ma’muriy huquqbuzarliklar', numberText(p.administrative_offenses)),
-    row('Jinoiy ishlar', numberText(p.criminal_cases)),
-    row('Giyohvandlik vositalari', `${numberText(p.narcotics_kg, 3)} kg`),
+  const type = String(p.post_type || '')
+  const accent = type === 'CHBP' ? '#ff4964' : type === 'AERO' ? '#f5b942' : type === 'TIF' ? '#a78bfa' : type === 'PORT' ? '#35d3a1' : '#36bff2'
+  const rating = Math.max(0, Math.min(100, Math.round(Number(p.ranking_score || 0))))
+  const card = (icon: string, label: string, value: string, tone = '') => `<article class="passport-stat ${tone}"><i>${safeHtml(icon)}</i><span><small>${safeHtml(label)}</small><strong>${safeHtml(value)}</strong></span></article>`
+  const flowRow = (icon: string, label: string, entry: unknown, exit: unknown) => `<div class="passport-flow-row"><i>${safeHtml(icon)}</i><strong>${safeHtml(label)}</strong><b>${safeHtml(numberText(entry))}</b><b>${safeHtml(numberText(exit))}</b></div>`
+  const commonCards = [
+    card('⚖', 'Ma’muriy holatlar', numberText(p.administrative_offenses), 'warning'),
+    card('§', 'Jinoiy ishlar', numberText(p.criminal_cases), 'danger'),
+    card('◆', 'Giyohvandlik vositalari', `${numberText(p.narcotics_kg, 3)} kg`, 'violet'),
   ]
-  let metrics: string[]
-  if (p.post_type === 'TIF') {
-    metrics = [
-      row('Undirilgan bojxona to‘lovlari', `${numberText(p.customs_payments, 0)} so‘m`),
-      row('Holatlar soni', numberText(p.cases_count)),
-      row('Qo‘shimcha undirilgan to‘lovlar', `${numberText(p.additional_customs_payments, 0)} so‘m`),
-      ...common,
-    ]
-  } else if (p.post_type === 'AERO') {
-    metrics = [
-      row('Fuqarolar — kirish', numberText(p.citizens_entry)), row('Fuqarolar — chiqish', numberText(p.citizens_exit)),
-      row('Shaxsiy ko‘riklar', numberText(p.personal_inspections)), ...common,
-    ]
+  let mainContent = ''
+  if (type === 'TIF') {
+    mainContent = `<section class="passport-stat-grid financial">${[
+      card('₽', 'Undirilgan bojxona to‘lovlari', moneyText(p.customs_payments), 'money'),
+      card('▤', 'Rasmiylashtirilgan holatlar', numberText(p.cases_count), 'primary'),
+      card('+', 'Qo‘shimcha undirilgan', moneyText(p.additional_customs_payments), 'success'),
+      ...commonCards,
+    ].join('')}</section>`
   } else {
-    metrics = [
-      row('Avtotransport — kirish', numberText(p.vehicles_entry)), row('Avtotransport — chiqish', numberText(p.vehicles_exit)),
-      row('Fuqarolar — kirish', numberText(p.citizens_entry)), row('Fuqarolar — chiqish', numberText(p.citizens_exit)),
-      row('Bojxona ko‘riklari', numberText(p.customs_inspections)), ...common,
-    ]
+    const flowRows = type === 'AERO'
+      ? [flowRow('●', 'Fuqarolar', p.citizens_entry, p.citizens_exit)]
+      : [flowRow('▣', 'Avtotransport', p.vehicles_entry, p.vehicles_exit), flowRow('●', 'Fuqarolar', p.citizens_entry, p.citizens_exit)]
+    const specificCards = type === 'AERO'
+      ? [card('◎', 'Shaxsiy ko‘riklar', numberText(p.personal_inspections), 'primary')]
+      : [card('◈', 'Bojxona ko‘riklari', numberText(p.customs_inspections), 'primary')]
+    mainContent = `<section class="passport-flow"><div class="passport-flow-head"><span>HARAKAT KO‘RSATKICHI</span><b>↙ KIRISH</b><b>↗ CHIQISH</b></div>${flowRows.join('')}</section><section class="passport-stat-grid">${[...specificCards, ...commonCards].join('')}</section>`
   }
-  return `<div class="map-popup post-stat-popup"><small>${safeHtml(p.post_type)} · ${safeHtml(categoryText(p.post_category))}</small><strong>${safeHtml(p.post_code)} · ${safeHtml(p.post_name)}</strong><em>${safeHtml(p.period_from)} — ${safeHtml(p.period_to)}</em><div>${metrics.join('')}</div><footer>Reyting: ${safeHtml(p.ranking_position || '—')} / ${safeHtml(p.ranking_total || '—')}</footer></div>`
+  const permissions = type === 'CHBP' ? `<span class="passport-permission">${p.allow_passenger_vehicles ? '✓ Yengil' : ''}${p.allow_passenger_vehicles && p.allow_cargo_vehicles ? ' · ' : ''}${p.allow_cargo_vehicles ? '✓ Yuk' : ''}</span>` : ''
+  return `<div class="post-passport" style="--post-accent:${accent};--post-score:${rating * 3.6}deg"><header><div class="passport-heading"><span class="passport-emblem">⌖</span><div><small>BOJXONA POSTI PASPORTI</small><div><b>${safeHtml(type)}</b><em>${safeHtml(categoryText(p.post_category))}</em>${permissions}</div></div></div><div class="passport-score"><strong>${rating}</strong><small>BALL</small></div><h3>${safeHtml(p.post_name)}</h3><p><b>${safeHtml(p.post_code)}</b><span>${safeHtml(p.period_from)} — ${safeHtml(p.period_to)}</span></p></header>${mainContent}<footer><span>Tur bo‘yicha o‘rni</span><strong>#${safeHtml(p.ranking_position || '—')} <small>/ ${safeHtml(p.ranking_total || '—')} ta post</small></strong></footer></div>`
 }
 
 function sphereSize(p: Record<string, any>): number {
-  const rank = Number(p.ranking_position || 999)
-  const total = Math.max(1, Number(p.ranking_total || 1))
-  const strength = Math.max(0, 1 - (rank - 1) / total)
-  return Math.round(18 + strength * 16)
+  const score = Math.max(0, Math.min(100, Number(p.ranking_score || 0)))
+  return Math.round(18 + score / 100 * 16)
 }
 
 function sphereIcon(size: number, color: string): string {
