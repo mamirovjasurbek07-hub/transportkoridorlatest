@@ -191,15 +191,17 @@ async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, or
             "post_category": post.post_category, "neighbor_country_code": post.neighbor_country_code,
             "period_from": date_from.isoformat(), "period_to": date_to.isoformat(),
             "entry_count": declaration_entry, "exit_count": declaration_exit, "total_flow": int(total_flow),
-            "ranking_score": round(ranking_score, 2), "stats_source": "daily_metrics" if metric else "declarations",
+            "ranking_value": round(ranking_score, 2), "stats_source": "daily_metrics" if metric else "declarations",
             "allow_passenger_vehicles": post.allow_passenger_vehicles, "allow_cargo_vehicles": post.allow_cargo_vehicles,
             **values,
         })
     for post_type in {str(item["post_type"]) for item in post_properties}:
-        ranked = sorted((item for item in post_properties if item["post_type"] == post_type), key=lambda item: (-float(item["ranking_score"]), str(item["post_code"])))
+        ranked = sorted((item for item in post_properties if item["post_type"] == post_type), key=lambda item: (-float(item["ranking_value"]), str(item["post_code"])))
+        best_value = max((float(item["ranking_value"]) for item in ranked), default=0)
         for position, item in enumerate(ranked, start=1):
             item["ranking_position"] = position
             item["ranking_total"] = len(ranked)
+            item["ranking_score"] = round(float(item["ranking_value"]) * 100 / best_value, 1) if best_value else 0
     properties_by_code = {item["post_code"]: item for item in post_properties}
     posts_geojson = {"type": "FeatureCollection", "features": [{
         "type": "Feature", "geometry": {"type": "Point", "coordinates": [post.longitude, post.latitude]},

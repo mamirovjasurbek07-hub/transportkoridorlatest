@@ -86,6 +86,7 @@ async def rebuild_post_corridors(db: AsyncSession, post: CustomsPost) -> tuple[i
 async def list_posts(
     search: str | None = None,
     post_type: str | None = None,
+    post_category: str | None = Query(default=None, pattern="^(UNASSIGNED|EXTRA|FIRST|SECOND)$"),
     country: str | None = None,
     active_only: bool = True,
     page: int = Query(1, ge=1),
@@ -99,6 +100,8 @@ async def list_posts(
         filters.append(or_(CustomsPost.post_code.ilike(f"%{search}%"), CustomsPost.post_name.ilike(f"%{search}%")))
     if post_type:
         filters.append(CustomsPost.post_type == post_type)
+    if post_category:
+        filters.append(CustomsPost.post_category == post_category)
     if country:
         filters.append(CustomsPost.neighbor_country_code == country.upper())
     total = await db.scalar(select(func.count()).select_from(CustomsPost).where(*filters))
