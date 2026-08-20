@@ -44,6 +44,7 @@ class CustomsPost(Base, TimestampMixin):
     post_code: Mapped[str] = mapped_column(String(10), unique=True, index=True)
     post_name: Mapped[str] = mapped_column(String(255))
     post_type: Mapped[str] = mapped_column(String(10), index=True)
+    post_category: Mapped[str] = mapped_column(String(30), default="UNASSIGNED", server_default="UNASSIGNED", index=True)
     region: Mapped[str | None] = mapped_column(String(120))
     neighbor_country_code: Mapped[str | None] = mapped_column(String(2), index=True)
     latitude: Mapped[float | None] = mapped_column(Float)
@@ -54,6 +55,30 @@ class CustomsPost(Base, TimestampMixin):
     allow_cargo_vehicles: Mapped[bool] = mapped_column(Boolean, default=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class PostDailyMetric(Base, TimestampMixin):
+    __tablename__ = "post_daily_metrics"
+    __table_args__ = (
+        UniqueConstraint("post_code", "metric_date", name="uq_post_daily_metric"),
+        Index("ix_post_daily_metrics_date_type", "metric_date", "post_type"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, server_default=func.gen_random_uuid())
+    post_code: Mapped[str] = mapped_column(ForeignKey("customs_posts.post_code", ondelete="CASCADE"), index=True)
+    post_type: Mapped[str] = mapped_column(String(10), index=True)
+    metric_date: Mapped[date] = mapped_column(Date, index=True)
+    vehicles_entry: Mapped[int] = mapped_column(BigInteger, default=0)
+    vehicles_exit: Mapped[int] = mapped_column(BigInteger, default=0)
+    citizens_entry: Mapped[int] = mapped_column(BigInteger, default=0)
+    citizens_exit: Mapped[int] = mapped_column(BigInteger, default=0)
+    customs_inspections: Mapped[int] = mapped_column(BigInteger, default=0)
+    personal_inspections: Mapped[int] = mapped_column(BigInteger, default=0)
+    administrative_offenses: Mapped[int] = mapped_column(BigInteger, default=0)
+    criminal_cases: Mapped[int] = mapped_column(BigInteger, default=0)
+    narcotics_kg: Mapped[float] = mapped_column(Float, default=0)
+    customs_payments: Mapped[float] = mapped_column(Float, default=0)
+    cases_count: Mapped[int] = mapped_column(BigInteger, default=0)
+    additional_customs_payments: Mapped[float] = mapped_column(Float, default=0)
 
 
 class CountryGateway(Base, TimestampMixin):

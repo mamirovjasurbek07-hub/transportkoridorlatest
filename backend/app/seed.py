@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import noload, selectinload
 
 from app.config import settings
-from app.models import Corridor, CorridorWaypoint, CountryGateway, CustomsPost, TransitDeclaration, User
+from app.models import Corridor, CorridorWaypoint, CountryGateway, CustomsPost, PostDailyMetric, TransitDeclaration, User
 from app.security import hash_password, verify_password
 from app.routing import RoutingService
 
@@ -56,9 +56,20 @@ POSTS = [
     ("33011", "Urganch aeroporti", "AERO", None), ("33033", "Shovot chegaraoldi savdo zonasi", "CHBP", "TM"),
     ("26002", "Toshkent-tovar TIF", "TIF", None), ("26003", "Ark buloq TIF", "TIF", None),
     ("26004", "Chuqursoy TIF", "TIF", None), ("26009", "Keles temir yo'l", "RW", None), ("26010", "Sirg'ali TIF", "TIF", None),
-    ("26013", "Chuqursoy texnik idora", "TIF", None), ("00101", "Islom Karimov nomidagi Toshkent xalqaro aeroporti", "AERO", None),
+    ("26013", "Chuqursoy texnik idora", "RW", None), ("00101", "Islom Karimov nomidagi Toshkent xalqaro aeroporti", "AERO", None),
     ("00102", "Avia yuklar TIF", "TIF", None), ("00107", "Elektron tijorat TIF", "TIF", None), ("00110", "Toshkent-Humo aeroporti", "AERO", None),
 ]
+
+# PQ-122-son qarorining amaldagi 5-ilovasidagi toifalar. Toifa postning
+# texnik turi (CHBP/TIF/AERO/RW/PORT)dan alohida saqlanadi.
+POST_CATEGORIES: dict[str, str] = {
+    **dict.fromkeys(["00101", "03002", "24004", "14003", "27021", "35004", "27001", "06010", "27009", "27008", "22003", "22017", "35010", "26013", "27011", "26009", "22004", "18001", "00110", "33033"], "EXTRA"),
+    **dict.fromkeys(["30004", "18002", "06001", "30010", "12002", "33011", "06011", "27024", "30012", "27023", "14002", "30001", "22015", "03013", "03007", "03006", "03005", "03008", "30005", "30006", "22007", "24006", "24014"], "FIRST"),
+    **dict.fromkeys(["03009", "33001", "27013", "24002", "33004", "14005", "35003", "14004", "30008", "08007", "03014", "10012", "03003", "08003", "22002", "35001", "10008", "22011"], "SECOND"),
+    **dict.fromkeys(["26002", "26003", "26010", "26004", "00102", "22022"], "EXTRA"),
+    **dict.fromkeys(["18005", "06006", "18007", "00107", "35002", "14010", "27019", "30002", "10002", "27015", "27028", "03011", "08004", "27014", "33007", "22005", "03015", "30009", "27016", "12008"], "FIRST"),
+    **dict.fromkeys(["27020", "06009", "12003", "10007", "24009", "22006"], "SECOND"),
+}
 
 
 def _official_post_name(code: str, name: str, post_type: str) -> str:
@@ -356,6 +367,51 @@ async def seed_demo_declarations(db: AsyncSession, reset: bool = False) -> int:
     return count
 
 
+async def seed_demo_post_metrics(db: AsyncSession) -> int:
+    """Small, clearly demo-only monthly dataset for the new post dashboard."""
+    existing = await db.scalar(select(func.count()).select_from(PostDailyMetric)) or 0
+    if existing:
+        return existing
+    today = date.today()
+    rng = random.Random(20260820)
+    rows = 0
+    for index, (code, _name, post_type, _country) in enumerate(POSTS, start=1):
+        weight = 28 + (index * 37) % 170
+        for month in range(1, today.month + 1):
+            metric_date = date(today.year, month, 1)
+            common = {
+                "post_code": code,
+                "post_type": post_type,
+                "metric_date": metric_date,
+                "administrative_offenses": max(0, weight // 18 + rng.randint(0, 4)),
+                "criminal_cases": max(0, weight // 95 + rng.randint(0, 1)),
+                "narcotics_kg": round((weight % 23) * 0.17 + rng.random(), 3),
+            }
+            if post_type == "TIF":
+                common.update(
+                    customs_payments=float(weight * 175_000_000),
+                    cases_count=weight * 14,
+                    additional_customs_payments=float(weight * 4_800_000),
+                )
+            elif post_type == "AERO":
+                common.update(
+                    citizens_entry=weight * 47,
+                    citizens_exit=weight * 44,
+                    personal_inspections=max(1, weight // 5),
+                )
+            else:
+                common.update(
+                    vehicles_entry=weight * 11,
+                    vehicles_exit=weight * 10,
+                    citizens_entry=weight * 18,
+                    citizens_exit=weight * 17,
+                    customs_inspections=weight * 4,
+                )
+            db.add(PostDailyMetric(**common))
+            rows += 1
+    return rows
+
+
 async def seed_all(db: AsyncSession) -> None:
     # This application currently manages the bootstrap administrator through
     # Render environment variables. Keep the single existing admin in sync so
@@ -397,6 +453,7 @@ async def seed_all(db: AsyncSession) -> None:
             post.is_active = True
         post.post_name = _official_post_name(code, name, post_type)
         post.post_type = post_type
+        post.post_category = POST_CATEGORIES.get(code, "UNASSIGNED")
         post.neighbor_country_code = country
         if lat is not None and (is_new or post.latitude is None or post.longitude is None):
             post.latitude = lat
@@ -463,6 +520,7 @@ async def seed_all(db: AsyncSession) -> None:
             db.add(wp)
     if settings.enable_demo_seed:
         await seed_demo_declarations(db)
+        await seed_demo_post_metrics(db)
     await db.commit()
 
 

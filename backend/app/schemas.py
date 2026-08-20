@@ -37,6 +37,7 @@ class PostBase(BaseModel):
     post_code: str = Field(pattern=r"^[0-9A-Za-z_-]{3,10}$")
     post_name: str = Field(min_length=2, max_length=255)
     post_type: PostType
+    post_category: Literal["UNASSIGNED", "EXTRA", "FIRST", "SECOND"] = "UNASSIGNED"
     region: str | None = Field(default=None, max_length=120)
     neighbor_country_code: str | None = Field(default=None, min_length=2, max_length=2)
     latitude: float | None = Field(default=None, ge=-90, le=90)
@@ -66,6 +67,7 @@ class PostCreate(PostBase):
 class PostUpdate(BaseModel):
     post_name: str | None = Field(default=None, min_length=2, max_length=255)
     post_type: PostType | None = None
+    post_category: Literal["UNASSIGNED", "EXTRA", "FIRST", "SECOND"] | None = None
     region: str | None = None
     neighbor_country_code: str | None = None
     latitude: float | None = Field(default=None, ge=-90, le=90)
