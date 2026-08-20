@@ -69,7 +69,13 @@ export function postStatisticsHtml(p: Record<string, any>): string {
   } else {
     const flowRows = type === 'AERO'
       ? [flowRow('●', 'Fuqarolar', p.citizens_entry, p.citizens_exit)]
-      : [flowRow('▣', 'Avtotransport', p.vehicles_entry, p.vehicles_exit), flowRow('●', 'Fuqarolar', p.citizens_entry, p.citizens_exit)]
+      : type === 'RW'
+        ? [
+            flowRow('□', 'Bo‘sh vagonlar', p.empty_wagons_entry, p.empty_wagons_exit),
+            flowRow('■', 'Yukli vagonlar', p.loaded_wagons_entry, p.loaded_wagons_exit),
+            flowRow('●', 'Fuqarolar', p.citizens_entry, p.citizens_exit),
+          ]
+        : [flowRow('▣', 'Avtotransport', p.vehicles_entry, p.vehicles_exit), flowRow('●', 'Fuqarolar', p.citizens_entry, p.citizens_exit)]
     const specificCards = type === 'AERO'
       ? [card('◎', 'Shaxsiy ko‘riklar', numberText(p.personal_inspections), 'primary')]
       : [card('◈', 'Bojxona ko‘riklari', numberText(p.customs_inspections), 'primary')]
@@ -212,8 +218,9 @@ export function YandexTransitMap({ apiKey, posts = empty, corridors = empty, sel
       const size = sphereSize(p)
       const marker = new ymaps.Placemark([lat, lng], { balloonContent: balloon, hintContent: balloon }, { iconLayout: 'default#image', iconImageHref: sphereIcon(size, color), iconImageSize: [size, size], iconImageOffset: [-size / 2, -size / 2], zIndex: 400 + Math.min(flow, 10_000), balloonMinWidth: 500, balloonMaxWidth: 520, balloonMaxHeight: 560 })
       marker.events.add('balloonopen', () => window.setTimeout(() => {
-        const close = document.querySelector(`[data-post-id="${String(p.id)}"] .passport-close`) as HTMLButtonElement | null
-        if (close) close.onclick = () => marker.balloon.close()
+        document.querySelectorAll<HTMLButtonElement>(`[data-post-id="${String(p.id)}"] .passport-close`).forEach((close) => {
+          close.onclick = () => marker.balloon.close()
+        })
       }, 0))
       collection.add(marker)
     }
