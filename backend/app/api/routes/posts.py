@@ -22,6 +22,7 @@ router = APIRouter(prefix="/posts", tags=["posts"])
 def post_dict(p: CustomsPost) -> dict:
     return {
         "id": str(p.id), "post_code": p.post_code, "post_name": p.post_name, "post_type": p.post_type,
+        "post_category": p.post_category,
         "region": p.region, "neighbor_country_code": p.neighbor_country_code, "latitude": p.latitude,
         "longitude": p.longitude, "location_verified": p.location_verified,
         "allow_passenger_vehicles": p.allow_passenger_vehicles, "allow_cargo_vehicles": p.allow_cargo_vehicles,

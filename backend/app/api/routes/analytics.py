@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import noload
 
 from app.database import get_db
-from app.models import Corridor, CustomsPost, TransitDeclaration
+from app.models import Corridor, CustomsPost, PostDailyMetric, TransitDeclaration
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
@@ -143,13 +143,68 @@ async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, or
     for row in grouped:
         entry_counts[row.entry_post_code] = entry_counts.get(row.entry_post_code, 0) + row.count
         exit_counts[row.exit_post_code] = exit_counts.get(row.exit_post_code, 0) + row.count
+    metric_rows = (await db.execute(
+        select(
+            PostDailyMetric.post_code,
+            func.sum(PostDailyMetric.vehicles_entry).label("vehicles_entry"),
+            func.sum(PostDailyMetric.vehicles_exit).label("vehicles_exit"),
+            func.sum(PostDailyMetric.citizens_entry).label("citizens_entry"),
+            func.sum(PostDailyMetric.citizens_exit).label("citizens_exit"),
+            func.sum(PostDailyMetric.customs_inspections).label("customs_inspections"),
+            func.sum(PostDailyMetric.personal_inspections).label("personal_inspections"),
+            func.sum(PostDailyMetric.administrative_offenses).label("administrative_offenses"),
+            func.sum(PostDailyMetric.criminal_cases).label("criminal_cases"),
+            func.sum(PostDailyMetric.narcotics_kg).label("narcotics_kg"),
+            func.sum(PostDailyMetric.customs_payments).label("customs_payments"),
+            func.sum(PostDailyMetric.cases_count).label("cases_count"),
+            func.sum(PostDailyMetric.additional_customs_payments).label("additional_customs_payments"),
+        ).where(PostDailyMetric.metric_date.between(date_from, date_to)).group_by(PostDailyMetric.post_code)
+    )).all()
+    metrics_by_code = {row.post_code: row for row in metric_rows}
+    metric_fields = (
+        "vehicles_entry", "vehicles_exit", "citizens_entry", "citizens_exit", "customs_inspections",
+        "personal_inspections", "administrative_offenses", "criminal_cases", "narcotics_kg",
+        "customs_payments", "cases_count", "additional_customs_payments",
+    )
+    post_properties: list[dict] = []
+    for post in post_rows:
+        metric = metrics_by_code.get(post.post_code)
+        values = {field: float(getattr(metric, field) or 0) if field in {"narcotics_kg", "customs_payments", "additional_customs_payments"} else int(getattr(metric, field) or 0) for field in metric_fields} if metric else {field: 0 for field in metric_fields}
+        declaration_entry = entry_counts.get(post.post_code, 0)
+        declaration_exit = exit_counts.get(post.post_code, 0)
+        if post.post_type in {"CHBP", "RW", "PORT"} and not (values["vehicles_entry"] or values["vehicles_exit"]):
+            values["vehicles_entry"] = declaration_entry
+            values["vehicles_exit"] = declaration_exit
+        total_flow = (
+            values["cases_count"] if post.post_type == "TIF"
+            else values["citizens_entry"] + values["citizens_exit"] if post.post_type == "AERO"
+            else values["vehicles_entry"] + values["vehicles_exit"]
+        )
+        if post.post_type == "TIF":
+            ranking_score = values["cases_count"] + values["customs_payments"] / 100_000_000 + values["additional_customs_payments"] / 10_000_000
+        elif post.post_type == "AERO":
+            ranking_score = total_flow + values["personal_inspections"] * 2 + values["administrative_offenses"] * 5 + values["criminal_cases"] * 20 + values["narcotics_kg"] * 30
+        else:
+            ranking_score = total_flow + (values["citizens_entry"] + values["citizens_exit"]) * .35 + values["customs_inspections"] * .5 + values["administrative_offenses"] * 5 + values["criminal_cases"] * 20 + values["narcotics_kg"] * 30
+        post_properties.append({
+            "id": str(post.id), "post_code": post.post_code, "post_name": post.post_name, "post_type": post.post_type,
+            "post_category": post.post_category, "neighbor_country_code": post.neighbor_country_code,
+            "period_from": date_from.isoformat(), "period_to": date_to.isoformat(),
+            "entry_count": declaration_entry, "exit_count": declaration_exit, "total_flow": int(total_flow),
+            "ranking_score": round(ranking_score, 2), "stats_source": "daily_metrics" if metric else "declarations",
+            "allow_passenger_vehicles": post.allow_passenger_vehicles, "allow_cargo_vehicles": post.allow_cargo_vehicles,
+            **values,
+        })
+    for post_type in {str(item["post_type"]) for item in post_properties}:
+        ranked = sorted((item for item in post_properties if item["post_type"] == post_type), key=lambda item: (-float(item["ranking_score"]), str(item["post_code"])))
+        for position, item in enumerate(ranked, start=1):
+            item["ranking_position"] = position
+            item["ranking_total"] = len(ranked)
+    properties_by_code = {item["post_code"]: item for item in post_properties}
     posts_geojson = {"type": "FeatureCollection", "features": [{
-        "type": "Feature", "geometry": {"type": "Point", "coordinates": [p.longitude, p.latitude]},
-        "properties": {"id": str(p.id), "post_code": p.post_code, "post_name": p.post_name, "post_type": p.post_type,
-            "neighbor_country_code": p.neighbor_country_code, "entry_count": entry_counts.get(p.post_code, 0),
-            "exit_count": exit_counts.get(p.post_code, 0), "total_flow": entry_counts.get(p.post_code, 0) + exit_counts.get(p.post_code, 0),
-            "allow_passenger_vehicles": p.allow_passenger_vehicles, "allow_cargo_vehicles": p.allow_cargo_vehicles},
-    } for p in post_rows]}
+        "type": "Feature", "geometry": {"type": "Point", "coordinates": [post.longitude, post.latitude]},
+        "properties": properties_by_code[post.post_code],
+    } for post in post_rows]}
     by_origin = (await db.execute(select(TransitDeclaration.origin_country_code, func.count().label("count")).where(*filters).group_by(TransitDeclaration.origin_country_code).order_by(func.count().desc()).limit(8))).all()
     trend = (await db.execute(select(TransitDeclaration.declaration_date, func.count().label("count")).where(*filters).group_by(TransitDeclaration.declaration_date).order_by(TransitDeclaration.declaration_date))).all()
     period_days = (date_to - date_from).days + 1
