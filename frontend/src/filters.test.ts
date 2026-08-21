@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { filtersToSearch, initialDateRange } from './filters'
 
 describe('filter helpers', () => {
-  it('defaults to first of January through local today', () => {
-    expect(initialDateRange(new Date(2026, 7, 11))).toEqual({ date_from: '2026-01-01', date_to: '2026-08-11' })
+  it('defaults to the latest official report period', () => {
+    expect(initialDateRange(new Date(2026, 7, 11))).toEqual({ date_from: '2026-01-01', date_to: '2026-07-31' })
   })
 
   it('keeps only active URL filters', () => {
