@@ -13,6 +13,7 @@ from sqlalchemy.orm import noload, selectinload
 
 from app.config import settings
 from app.models import Corridor, CorridorWaypoint, CountryGateway, CustomsPost, PostDailyMetric, TransitDeclaration, User
+from app.official_chbp_metrics import OFFICIAL_CHBP_PERIODS, OFFICIAL_CHBP_VEHICLE_ROWS
 from app.security import hash_password, verify_password
 from app.routing import RoutingService
 
@@ -369,13 +370,15 @@ async def seed_demo_declarations(db: AsyncSession, reset: bool = False) -> int:
 
 async def seed_demo_post_metrics(db: AsyncSession) -> int:
     """Small, clearly demo-only monthly dataset for the new post dashboard."""
-    existing = await db.scalar(select(func.count()).select_from(PostDailyMetric)) or 0
-    if existing:
-        return existing
+    existing_codes = set((await db.scalars(select(PostDailyMetric.post_code).distinct())).all())
     today = date.today()
     rng = random.Random(20260820)
     rows = 0
     for index, (code, _name, post_type, _country) in enumerate(POSTS, start=1):
+        # Official CHBP rows inserted by the Excel migration must never be
+        # mixed with generated demo values. Seed only completely empty posts.
+        if code in existing_codes:
+            continue
         weight = 28 + (index * 37) % 170
         for month in range(1, today.month + 1):
             metric_date = date(today.year, month, 1)
@@ -409,6 +412,18 @@ async def seed_demo_post_metrics(db: AsyncSession) -> int:
                     citizens_exit=weight * 17,
                     customs_inspections=weight * 4,
                 )
+            elif post_type == "CHBP":
+                common.update(
+                    vehicles_entry=weight * 11,
+                    vehicles_exit=weight * 10,
+                    cargo_vehicles_entry=weight * 8,
+                    cargo_vehicles_exit=weight * 7,
+                    light_vehicles_entry=weight * 3,
+                    light_vehicles_exit=weight * 3,
+                    citizens_entry=weight * 18,
+                    citizens_exit=weight * 17,
+                    customs_inspections=weight * 4,
+                )
             else:
                 common.update(
                     vehicles_entry=weight * 11,
@@ -419,6 +434,42 @@ async def seed_demo_post_metrics(db: AsyncSession) -> int:
                 )
             db.add(PostDailyMetric(**common))
             rows += 1
+    return rows
+
+
+async def seed_official_chbp_vehicle_metrics(db: AsyncSession) -> int:
+    """Fill official CHBP rows after posts exist on a completely fresh DB."""
+    official_dates = set(OFFICIAL_CHBP_PERIODS)
+    existing_rows = (await db.execute(
+        select(PostDailyMetric.post_code, PostDailyMetric.metric_date).where(
+            PostDailyMetric.post_type == "CHBP",
+            PostDailyMetric.metric_date.in_(official_dates),
+        )
+    )).all()
+    existing_keys = {(row.post_code, row.metric_date) for row in existing_rows}
+    chbp_codes = set((await db.scalars(select(CustomsPost.post_code).where(CustomsPost.post_type == "CHBP"))).all())
+    rows = 0
+    for code in chbp_codes:
+        values = OFFICIAL_CHBP_VEHICLE_ROWS.get(code, (0,) * 12)
+        for period_index, metric_date in enumerate(OFFICIAL_CHBP_PERIODS):
+            if (code, metric_date) in existing_keys:
+                continue
+            offset = period_index * 4
+            cargo_entry, light_entry, cargo_exit, light_exit = values[offset:offset + 4]
+            db.add(PostDailyMetric(
+                post_code=code,
+                post_type="CHBP",
+                metric_date=metric_date,
+                vehicles_entry=cargo_entry + light_entry,
+                vehicles_exit=cargo_exit + light_exit,
+                cargo_vehicles_entry=cargo_entry,
+                cargo_vehicles_exit=cargo_exit,
+                light_vehicles_entry=light_entry,
+                light_vehicles_exit=light_exit,
+            ))
+            rows += 1
+    if rows:
+        await db.flush()
     return rows
 
 
@@ -528,6 +579,7 @@ async def seed_all(db: AsyncSession) -> None:
                 post_code=waypoint.get("post_code"), label=waypoint.get("label"))
             wp.location = ST_SetSRID(ST_MakePoint(coord[0], coord[1]), 4326)
             db.add(wp)
+    await seed_official_chbp_vehicle_metrics(db)
     if settings.enable_demo_seed:
         await seed_demo_declarations(db)
         await seed_demo_post_metrics(db)
