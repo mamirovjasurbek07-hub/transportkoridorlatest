@@ -75,7 +75,14 @@ export function postStatisticsHtml(p: Record<string, any>): string {
             flowRow('■', 'Yukli vagonlar', p.loaded_wagons_entry, p.loaded_wagons_exit),
             flowRow('●', 'Fuqarolar', p.citizens_entry, p.citizens_exit),
           ]
-        : [flowRow('▣', 'Avtotransport', p.vehicles_entry, p.vehicles_exit), flowRow('●', 'Fuqarolar', p.citizens_entry, p.citizens_exit)]
+        : type === 'CHBP'
+          ? [
+              flowRow('▣', 'Jami avtotransport', p.vehicles_entry, p.vehicles_exit),
+              flowRow('▰', 'Yuk avtotransport', p.cargo_vehicles_entry, p.cargo_vehicles_exit),
+              flowRow('◇', 'Yengil avtotransport', p.light_vehicles_entry, p.light_vehicles_exit),
+              flowRow('●', 'Fuqarolar', p.citizens_entry, p.citizens_exit),
+            ]
+          : [flowRow('▣', 'Avtotransport', p.vehicles_entry, p.vehicles_exit), flowRow('●', 'Fuqarolar', p.citizens_entry, p.citizens_exit)]
     const specificCards = type === 'AERO'
       ? [card('◎', 'Shaxsiy ko‘riklar', numberText(p.personal_inspections), 'primary')]
       : [card('◈', 'Bojxona ko‘riklari', numberText(p.customs_inspections), 'primary')]
