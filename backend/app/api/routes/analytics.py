@@ -13,6 +13,8 @@ from app.database import get_db
 from app.models import Corridor, CustomsPost, PostDailyMetric, TransitDeclaration
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
+LATEST_OFFICIAL_REPORT_FROM = date(2026, 1, 1)
+LATEST_OFFICIAL_REPORT_TO = date(2026, 7, 31)
 
 
 def validate_dates(date_from: date, date_to: date) -> None:
@@ -148,6 +150,10 @@ async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, or
             PostDailyMetric.post_code,
             func.sum(PostDailyMetric.vehicles_entry).label("vehicles_entry"),
             func.sum(PostDailyMetric.vehicles_exit).label("vehicles_exit"),
+            func.sum(PostDailyMetric.cargo_vehicles_entry).label("cargo_vehicles_entry"),
+            func.sum(PostDailyMetric.cargo_vehicles_exit).label("cargo_vehicles_exit"),
+            func.sum(PostDailyMetric.light_vehicles_entry).label("light_vehicles_entry"),
+            func.sum(PostDailyMetric.light_vehicles_exit).label("light_vehicles_exit"),
             func.sum(PostDailyMetric.empty_wagons_entry).label("empty_wagons_entry"),
             func.sum(PostDailyMetric.empty_wagons_exit).label("empty_wagons_exit"),
             func.sum(PostDailyMetric.loaded_wagons_entry).label("loaded_wagons_entry"),
@@ -166,7 +172,8 @@ async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, or
     )).all()
     metrics_by_code = {row.post_code: row for row in metric_rows}
     metric_fields = (
-        "vehicles_entry", "vehicles_exit", "empty_wagons_entry", "empty_wagons_exit",
+        "vehicles_entry", "vehicles_exit", "cargo_vehicles_entry", "cargo_vehicles_exit",
+        "light_vehicles_entry", "light_vehicles_exit", "empty_wagons_entry", "empty_wagons_exit",
         "loaded_wagons_entry", "loaded_wagons_exit", "citizens_entry", "citizens_exit", "customs_inspections",
         "personal_inspections", "administrative_offenses", "criminal_cases", "narcotics_kg",
         "customs_payments", "cases_count", "additional_customs_payments",
@@ -177,7 +184,7 @@ async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, or
         values = {field: float(getattr(metric, field) or 0) if field in {"narcotics_kg", "customs_payments", "additional_customs_payments"} else int(getattr(metric, field) or 0) for field in metric_fields} if metric else {field: 0 for field in metric_fields}
         declaration_entry = entry_counts.get(post.post_code, 0)
         declaration_exit = exit_counts.get(post.post_code, 0)
-        if post.post_type in {"CHBP", "PORT"} and not (values["vehicles_entry"] or values["vehicles_exit"]):
+        if post.post_type in {"CHBP", "PORT"} and metric is None:
             values["vehicles_entry"] = declaration_entry
             values["vehicles_exit"] = declaration_exit
         if post.post_type == "RW" and metric is None:
@@ -262,8 +269,8 @@ async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, or
 @router.get("")
 async def analytics(
     response: Response,
-    date_from: date = Query(default_factory=lambda: date(date.today().year, 1, 1)),
-    date_to: date = Query(default_factory=date.today), origin: str | None = None, destination: str | None = None,
+    date_from: date = Query(default=LATEST_OFFICIAL_REPORT_FROM),
+    date_to: date = Query(default=LATEST_OFFICIAL_REPORT_TO), origin: str | None = None, destination: str | None = None,
     entry: str | None = None, exit: str | None = None, corridor: str | None = None, map_mode: str = Query("posts", pattern="^(posts|top5|all)$"), db: AsyncSession = Depends(get_db),
 ) -> dict:
     response.headers["Cache-Control"] = "public, max-age=15, stale-while-revalidate=30"
