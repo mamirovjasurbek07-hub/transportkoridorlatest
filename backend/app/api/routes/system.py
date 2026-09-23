@@ -149,4 +149,4 @@ async def update_setting(key: str, value: dict, request: Request, db: AsyncSessi
 async def list_audit(page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=200), db: AsyncSession = Depends(get_db), _: User = Depends(admin_user)) -> dict:
     total = await db.scalar(select(func.count()).select_from(AuditLog)) or 0
     rows = (await db.scalars(select(AuditLog).order_by(AuditLog.created_at.desc()).offset((page - 1) * page_size).limit(page_size))).all()
-    return {"items": [{"id": str(r.id), "user_id": str(r.user_id) if r.user_id else None, "action": r.action, "entity_type": r.entity_type, "entity_id": r.entity_id, "before": r.before_json, "after": r.after_json, "ip_address": r.ip_address, "created_at": r.created_at} for r in rows], "total": total, "page": page, "page_size": page_size}
+    return {"items": [{"id": str(r.id), "user_id": str(r.user_id) if r.user_id else None, "action": r.action, "entity_type": r.entity_type, "entity_id": r.entity_id, "before": r.before_json, "after": r.after_json, "ip_address": r.ip_address, "user_agent": r.user_agent, "created_at": r.created_at} for r in rows], "total": total, "page": page, "page_size": page_size}
