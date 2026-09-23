@@ -30,6 +30,7 @@ services:
       ROUTING_PROVIDER: osrm
       ROUTING_BASE_URL: https://router.project-osrm.org
       ENABLE_DEMO_SEED: "true"
+      SEED_ON_STARTUP: "true"
       COOKIE_SECURE: "false"
     ports:
       - "8000:8000"

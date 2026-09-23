@@ -48,10 +48,14 @@ So‘ng:
 Docker demo login qiymatlari: `admin@example.local` / `CHANGE_ME_NOW`. Production’da bu parolni ishlatmang.
 
 Render/Supabase deploymentida `ADMIN_INITIAL_EMAIL` va `ADMIN_INITIAL_PASSWORD`
-admin kirish ma'lumotlarining asosiy manbasi hisoblanadi. Ular o'zgartirilib servis
-qayta deploy qilinsa, mavjud yagona admin yozuvi yangi qiymatlar bilan xavfsiz
-sinxronlanadi. Parolning o'zi bazada saqlanmaydi, faqat uning himoyalangan hash'i
-saqlanadi.
+faqat faol admin mavjud bo'lmaganida boshlang'ich yoki tiklash adminini yaratadi.
+Oddiy qayta deploy mavjud adminning email yoki parolini almashtirmaydi. Parolning
+o'zi bazada saqlanmaydi, faqat uning himoyalangan hash'i saqlanadi.
+
+Productionda `SEED_ON_STARTUP=false` qolishi kerak. Alembic migratsiyasi Docker
+start buyrug'ida avtomatik ishlaydi; demo ma'lumot va routing qayta qurilishi esa
+server ishga tushishini to'smaydi. Zarur bo'lsa to'liq seed alohida ravishda
+`python -m app.seed_cli` buyrug'i bilan ishga tushiriladi.
 
 ## Lokal dasturlash
 
@@ -106,7 +110,7 @@ Admin sahifada:
 2. `Korridorlar` bo‘limida yuk boshlanadigan/tugaydigan davlatlar hamda entry/exit postlarni tanlang. Davlat kodi (`UZ`), raqamli kodi (`860`) yoki nomini yozib qidiring.
 3. `Boshlanish`, `Kirish posti`, `Oraliq/TIF`, `Chiqish posti` yoki `Tugash` rejimini tanlang. Xaritadagi post markerini bosish postni shu rolga avtomatik bog‘laydi. Postga bog‘langan route nuqtasi backendda ham bazadagi aniq post koordinatasiga snap qilinadi.
 4. Oddiy nuqtalarni sudrang; nuqta qatoridagi `+` bilan aynan undan keyin yangi VIA qo‘shing, strelkalar bilan tartiblang yoki `×` bilan olib tashlang. Yandex xaritasida corridor chizig‘ining ustini bosish ham eng yaqin segmentga VIA qo‘shadi. Har bir o‘zgarishdan 700 ms keyin barcha nuqtalar OSRM qaytargan real avtomobil yo‘li bilan avtomatik qayta bog‘lanadi; yangi javob kelguncha chiziq va foydalanuvchi tanlagan xarita masshtabi saqlanadi. So‘ng `Bazaga saqlash` tugmasini bosing.
-5. Oldin saqlangan geometriyalarni yangilash uchun corridorlar sahifasidagi `Barcha yo‘llarni yangilash` tugmasidan foydalaning. So‘rovlar Render va routerga og‘irlik qilmasligi uchun 5 tadan yuboriladi.
+5. Oldin saqlangan geometriyalarni yangilash uchun corridorlar sahifasidagi `Barcha yo‘llarni yangilash` tugmasidan foydalaning. Vazifa bazada navbat sifatida saqlanadi, ketma-ket bajariladi va deploy/restartdan keyin davom ettiriladi.
 6. Router route topmasa geometriya saqlanmaydi va corridor review holatiga o‘tadi.
 7. `Audit jurnali` barcha asosiy admin harakatlarini ko‘rsatadi.
 
@@ -123,7 +127,7 @@ ROUTING_PROFILE=driving
 
 JavaScript API kalitining domain chekloviga Render bergan domenni protokolsiz kiriting, masalan `transportyo-laklari.onrender.com`. `YANDEX_ROUTER_API_KEY` kerak emas: Yandex faqat xarita uchun, avtomobil yo‘li hisoblash esa OSRM orqali bajariladi. JavaScript kaliti sozlanmagan bo‘lsa xarita OSM'ga qaytadi.
 
-Production startup eski qo‘lda yozilgan `verified-osrm-seed-v2/v3/v4` geometriyalarini darhol bekor qiladi. Background migratsiya demo corridorlarni OSRM Route API orqali soniyasiga ko‘pi bilan bitta tashqi so‘rov bilan qayta quradi. Public sahifa shu vaqtda noto‘g‘ri straight-line chizmaydi va tayyor bo‘lmagan route’larni 15 soniyada qayta tekshiradi.
+Production startup faqat faol admin mavjudligini tekshiradi; demo seed va ommaviy route qayta qurilishi avtomatik bajarilmaydi. Korridor geometriyalari admin paneldagi fon vazifasi orqali ketma-ket yangilanadi. Public sahifa tayyor bo‘lmagan route uchun noto‘g‘ri straight-line chizmaydi.
 
 Public analytics `posts`, `top5` va tanlangan corridor rejimlariga bo‘lingan. Dastlab geometriya yuborilmaydi; corridor katalogi waypoint va geometrysiz olinadi. PostGIS geometriyalari bitta batch SQL so‘rovda o‘qiladi, 1 KB dan katta javoblar GZip qilinadi va Supabase connection pool `3 + 2 overflow` bilan cheklangan.
 
