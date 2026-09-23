@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import structlog
+import asyncpg
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.encoders import jsonable_encoder
@@ -14,6 +15,7 @@ from fastapi.responses import FileResponse, ORJSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.api.router import api_router
 from app.config import settings
@@ -60,6 +62,7 @@ app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=5)
 @app.middleware("http")
 async def request_context(request: Request, call_next):
     request_id = request.headers.get("x-request-id", str(uuid.uuid4()))
+    request.state.request_id = request_id
     started = time.perf_counter()
     response = await call_next(request)
     duration_ms = round((time.perf_counter() - started) * 1000, 2)
@@ -79,10 +82,52 @@ async def validation_error(_: Request, exc: RequestValidationError):
     return ORJSONResponse(status_code=422, content={"error": {"code": "VALIDATION_ERROR", "message": "Kiritilgan ma'lumotlarni tekshiring", "details": {"fields": jsonable_encoder(exc.errors())}}})
 
 
+def database_error_reason(exc: Exception) -> str:
+    message = str(exc).lower()
+    if "tenant/user" in message and "not found" in message:
+        return "supabase_pooler_tenant_not_found"
+    if "password authentication failed" in message:
+        return "database_authentication_failed"
+    if "timeout" in message:
+        return "database_timeout"
+    return "database_connection_failed"
+
+
+async def database_unavailable(request: Request, exc: Exception):
+    request_id = getattr(request.state, "request_id", str(uuid.uuid4()))
+    await logger.aerror(
+        "database_unavailable",
+        request_id=request_id,
+        path=request.url.path,
+        error=type(exc).__name__,
+        reason=database_error_reason(exc),
+    )
+    return ORJSONResponse(
+        status_code=503,
+        headers={"Retry-After": "10", "X-Request-ID": request_id},
+        content={
+            "error": {
+                "code": "DATABASE_UNAVAILABLE",
+                "message": "Ma'lumotlar bazasiga ulanib bo'lmadi. Iltimos, birozdan so'ng qayta urinib ko'ring.",
+                "details": {"request_id": request_id},
+            }
+        },
+    )
+
+
+app.add_exception_handler(SQLAlchemyError, database_unavailable)
+app.add_exception_handler(asyncpg.PostgresError, database_unavailable)
+
+
 @app.exception_handler(Exception)
 async def unhandled_error(request: Request, exc: Exception):
-    await logger.aerror("unhandled_error", path=request.url.path, error=type(exc).__name__)
-    return ORJSONResponse(status_code=500, content={"error": {"code": "INTERNAL_ERROR", "message": "Tizimda kutilmagan xato yuz berdi", "details": {}}})
+    request_id = getattr(request.state, "request_id", str(uuid.uuid4()))
+    await logger.aerror("unhandled_error", request_id=request_id, path=request.url.path, error=type(exc).__name__)
+    return ORJSONResponse(
+        status_code=500,
+        headers={"X-Request-ID": request_id},
+        content={"error": {"code": "INTERNAL_ERROR", "message": "Tizimda kutilmagan xato yuz berdi", "details": {"request_id": request_id}}},
+    )
 
 
 app.include_router(api_router, prefix="/api")

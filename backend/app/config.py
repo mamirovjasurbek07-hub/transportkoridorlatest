@@ -1,7 +1,8 @@
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import urlsplit
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -34,11 +35,20 @@ class Settings(BaseSettings):
     @field_validator("database_url")
     @classmethod
     def async_database_url(cls, value: str) -> str:
-        if value.startswith("postgres://"):
-            return value.replace("postgres://", "postgresql+asyncpg://", 1)
-        if value.startswith("postgresql://"):
-            return value.replace("postgresql://", "postgresql+asyncpg://", 1)
-        return value
+        normalized = value.strip()
+        if normalized.startswith("postgres://"):
+            normalized = normalized.replace("postgres://", "postgresql+asyncpg://", 1)
+        elif normalized.startswith("postgresql://"):
+            normalized = normalized.replace("postgresql://", "postgresql+asyncpg://", 1)
+        if not normalized.startswith("postgresql+asyncpg://"):
+            raise ValueError("DATABASE_URL PostgreSQL connection URI bo'lishi kerak")
+
+        parsed = urlsplit(normalized.replace("postgresql+asyncpg://", "postgresql://", 1))
+        if not parsed.hostname or not parsed.username or not parsed.path.strip("/"):
+            raise ValueError("DATABASE_URL host, foydalanuvchi va database nomini o'z ichiga olishi kerak")
+        if parsed.hostname.endswith(".pooler.supabase.com") and "." not in parsed.username:
+            raise ValueError("Supabase pooler username ROLE.PROJECT_REF formatida bo'lishi kerak")
+        return normalized
 
     @field_validator("admin_initial_email", mode="before")
     @classmethod
@@ -54,6 +64,18 @@ class Settings(BaseSettings):
         if len(value) < 8:
             raise ValueError("ADMIN_INITIAL_PASSWORD kamida 8 belgidan iborat bo'lishi kerak")
         return value
+
+    @model_validator(mode="after")
+    def secure_production_settings(self) -> "Settings":
+        if self.app_env != "production":
+            return self
+        if self.secret_key == "development-only-secret-change-before-production" or len(self.secret_key) < 32:
+            raise ValueError("Production uchun kamida 32 belgili noyob SECRET_KEY talab qilinadi")
+        if self.admin_initial_password == "CHANGE_ME_NOW":
+            raise ValueError("Production uchun ADMIN_INITIAL_PASSWORD almashtirilishi kerak")
+        if not self.cookie_secure:
+            raise ValueError("Production uchun COOKIE_SECURE=true bo'lishi kerak")
+        return self
 
     @property
     def allowed_origins(self) -> list[str]:
