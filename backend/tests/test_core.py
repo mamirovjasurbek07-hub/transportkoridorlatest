@@ -3,6 +3,8 @@ from pydantic import ValidationError
 
 from app.schemas import PostCreate
 from app.routing import RoutingService
+from app.query_utils import contains_pattern
+from app.security import totp_code
 
 
 def test_post_code_keeps_leading_zeroes():
@@ -25,3 +27,13 @@ def test_cache_key_is_stable_and_order_sensitive():
     b = list(reversed(a))
     assert RoutingService._hash(a) == RoutingService._hash(a)
     assert RoutingService._hash(a) != RoutingService._hash(b)
+
+
+def test_search_wildcards_are_escaped():
+    assert contains_pattern(r"A%_\B") == r"%A\%\_\\B%"
+
+
+def test_totp_is_deterministic_for_a_timestamp():
+    secret = "JBSWY3DPEHPK3PXP"
+    assert totp_code(secret, 1_700_000_000) == totp_code(secret, 1_700_000_000)
+    assert len(totp_code(secret, 1_700_000_000)) == 6
