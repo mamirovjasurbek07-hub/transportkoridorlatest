@@ -1,13 +1,13 @@
 import { create } from 'zustand'
 import { api, setCsrfToken } from './api'
 
-interface User { id: string; email: string; role: string; is_active: boolean }
+interface User { id: string; email: string; role: string; is_active: boolean; totp_enabled: boolean }
 interface AuthState {
   user: User | null
   loading: boolean
   checked: boolean
   check: () => Promise<void>
-  login: (email: string, password: string) => Promise<{ password_change_recommended: boolean }>
+  login: (email: string, password: string, otp?: string) => Promise<{ password_change_recommended: boolean }>
   logout: () => Promise<void>
 }
 
@@ -19,10 +19,10 @@ export const useAuth = create<AuthState>((set) => ({
     try { const result = await api<User & { csrf_token: string }>('/auth/me'); setCsrfToken(result.csrf_token); set({ user: result, checked: true }) }
     catch { set({ user: null, checked: true }) }
   },
-  login: async (email, password) => {
+  login: async (email, password, otp) => {
     set({ loading: true })
     try {
-      const result = await api<{ user: User; csrf_token: string; password_change_recommended: boolean }>('/auth/login', { method: 'POST', body: JSON.stringify({ email: email.trim().toLowerCase(), password }) })
+      const result = await api<{ user: User; csrf_token: string; password_change_recommended: boolean }>('/auth/login', { method: 'POST', body: JSON.stringify({ email: email.trim().toLowerCase(), password, otp: otp?.trim() || undefined }) })
       setCsrfToken(result.csrf_token)
       set({ user: result.user, checked: true })
       return { password_change_recommended: result.password_change_recommended }

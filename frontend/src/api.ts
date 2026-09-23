@@ -20,7 +20,7 @@ export class ApiError extends Error {
 export async function api<T>(path: string, init: RequestInit = {}, signal?: AbortSignal): Promise<T> {
   const method = (init.method || 'GET').toUpperCase()
   const headers = new Headers(init.headers)
-  if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
+  if (init.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) headers.set('X-CSRF-Token', csrfToken || cookie('csrf_token'))
   const response = await fetch(`${API_BASE}${path}`, { ...init, headers, credentials: 'include', signal })
   if (!response.ok) {
