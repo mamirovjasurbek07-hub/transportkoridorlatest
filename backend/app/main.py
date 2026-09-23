@@ -6,7 +6,7 @@ from pathlib import Path
 
 import structlog
 import asyncpg
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,6 +18,7 @@ from slowapi.util import get_remote_address
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.api.router import api_router
+from app.audit import audit_record, client_ip
 from app.config import settings
 from app.database import SessionLocal
 from app.seed import rebuild_pending_seed_routes, seed_all
@@ -136,15 +137,43 @@ app.include_router(api_router, prefix="/api")
 frontend_dist = (Path(__file__).resolve().parent.parent / "frontend_dist").resolve()
 
 
+async def record_page_visit(action: str, path: str, ip_address: str | None, user_agent: str, request_id: str) -> None:
+    try:
+        async with SessionLocal() as db:
+            db.add(
+                audit_record(
+                    action,
+                    "page",
+                    path,
+                    ip_address,
+                    user_agent,
+                    after={"request_id": request_id},
+                )
+            )
+            await db.commit()
+    except Exception as exc:
+        await logger.awarning("page_visit_log_failed", path=path, error=type(exc).__name__)
+
+
 @app.head("/", include_in_schema=False)
 async def head_root() -> Response:
     return Response(status_code=200)
 
 
 @app.get("/{full_path:path}", include_in_schema=False)
-async def frontend(full_path: str):
+async def frontend(full_path: str, request: Request, background_tasks: BackgroundTasks):
     if full_path.startswith("api/"):
         raise HTTPException(status_code=404, detail="Endpoint topilmadi")
+    is_admin_page = full_path == "admin" or full_path.startswith("admin/")
+    if full_path == "" or is_admin_page:
+        background_tasks.add_task(
+            record_page_visit,
+            "ADMIN_PAGE_VISIT" if is_admin_page else "PUBLIC_VISIT",
+            request.url.path,
+            client_ip(request),
+            request.headers.get("user-agent", "")[:255],
+            getattr(request.state, "request_id", "")[:100],
+        )
     requested = (frontend_dist / full_path).resolve()
     if frontend_dist in requested.parents and requested.is_file():
         return FileResponse(requested)

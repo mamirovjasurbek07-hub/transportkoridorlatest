@@ -5,16 +5,26 @@ from fastapi import Cookie, Depends, Header, HTTPException, Request, status
 from jwt import InvalidTokenError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.audit import add_security_audit
 from app.database import get_db
 from app.models import User
 from app.security import decode_access_token
 
 
 async def current_user(
+    request: Request,
     access_token: str | None = Cookie(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> User:
     if not access_token:
+        await add_security_audit(
+            db,
+            request,
+            "ADMIN_ACCESS_DENIED",
+            request.url.path,
+            details={"reason": "missing_session"},
+        )
+        await db.commit()
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Login talab qilinadi")
     try:
         payload = decode_access_token(access_token)
@@ -22,6 +32,15 @@ async def current_user(
     except (InvalidTokenError, KeyError, ValueError):
         user = None
     if not user or not user.is_active:
+        await add_security_audit(
+            db,
+            request,
+            "ADMIN_ACCESS_DENIED",
+            request.url.path,
+            user=user,
+            details={"reason": "invalid_session"},
+        )
+        await db.commit()
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Sessiya yaroqsiz")
     return user
 
