@@ -160,8 +160,8 @@ async def update_corridor(corridor_id: str, payload: CorridorUpdate, request: Re
         setattr(corridor, key, value)
     if payload.waypoints is not None:
         types = {waypoint.waypoint_type for waypoint in payload.waypoints}
-        if not {"ORIGIN_GATEWAY", "ENTRY_POST", "EXIT_POST", "DESTINATION_GATEWAY"}.issubset(types):
-            raise HTTPException(status_code=422, detail="Boshlanish, kirish posti, chiqish posti va tugash nuqtasi majburiy")
+        if not {"ENTRY_POST", "EXIT_POST"}.issubset(types):
+            raise HTTPException(status_code=422, detail="Tahrirlashda kirish va chiqish postlari majburiy")
         entry_waypoint = next(waypoint for waypoint in payload.waypoints if waypoint.waypoint_type == "ENTRY_POST")
         exit_waypoint = next(waypoint for waypoint in payload.waypoints if waypoint.waypoint_type == "EXIT_POST")
         if entry_waypoint.post_code != next_entry or exit_waypoint.post_code != next_exit:
