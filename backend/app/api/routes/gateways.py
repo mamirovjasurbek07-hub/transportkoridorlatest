@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.dependencies import admin_user, csrf_protect
+from app.dependencies import editor_user, csrf_protect
 from app.models import CountryGateway, User
 from app.audit import add_audit
 
@@ -33,7 +33,7 @@ def payload(item: CountryGateway) -> dict:
 
 
 @router.get("")
-async def list_gateways(country: str | None = None, db: AsyncSession = Depends(get_db), _: User = Depends(admin_user)) -> list[dict]:
+async def list_gateways(country: str | None = None, db: AsyncSession = Depends(get_db), _: User = Depends(editor_user)) -> list[dict]:
     query = select(CountryGateway).order_by(CountryGateway.country_code, CountryGateway.name)
     if country:
         query = query.where(CountryGateway.country_code == country.upper())
@@ -41,7 +41,7 @@ async def list_gateways(country: str | None = None, db: AsyncSession = Depends(g
 
 
 @router.post("", status_code=201, dependencies=[Depends(csrf_protect)])
-async def create_gateway(data: GatewayInput, request: Request, db: AsyncSession = Depends(get_db), user: User = Depends(admin_user)) -> dict:
+async def create_gateway(data: GatewayInput, request: Request, db: AsyncSession = Depends(get_db), user: User = Depends(editor_user)) -> dict:
     values = data.model_dump()
     values["country_code"] = values["country_code"].upper()
     if values["neighbor_country_code"]:
@@ -57,7 +57,7 @@ async def create_gateway(data: GatewayInput, request: Request, db: AsyncSession 
 
 
 @router.put("/{gateway_id}", dependencies=[Depends(csrf_protect)])
-async def update_gateway(gateway_id: uuid.UUID, data: GatewayInput, request: Request, db: AsyncSession = Depends(get_db), user: User = Depends(admin_user)) -> dict:
+async def update_gateway(gateway_id: uuid.UUID, data: GatewayInput, request: Request, db: AsyncSession = Depends(get_db), user: User = Depends(editor_user)) -> dict:
     item = await db.get(CountryGateway, gateway_id)
     if not item:
         raise HTTPException(status_code=404, detail="Gateway topilmadi")
@@ -71,7 +71,7 @@ async def update_gateway(gateway_id: uuid.UUID, data: GatewayInput, request: Req
 
 
 @router.delete("/{gateway_id}", dependencies=[Depends(csrf_protect)])
-async def deactivate_gateway(gateway_id: uuid.UUID, request: Request, db: AsyncSession = Depends(get_db), user: User = Depends(admin_user)) -> dict:
+async def deactivate_gateway(gateway_id: uuid.UUID, request: Request, db: AsyncSession = Depends(get_db), user: User = Depends(editor_user)) -> dict:
     item = await db.get(CountryGateway, gateway_id)
     if not item:
         raise HTTPException(status_code=404, detail="Gateway topilmadi")

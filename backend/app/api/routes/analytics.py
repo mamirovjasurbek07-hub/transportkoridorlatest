@@ -1,9 +1,12 @@
 import csv
+import asyncio
 import io
 import json
-from datetime import date, datetime, timedelta
+import time
+from datetime import UTC, date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi.responses import StreamingResponse
 from geoalchemy2.functions import ST_AsGeoJSON
 from sqlalchemy import extract, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +18,9 @@ from app.models import Corridor, CustomsPost, PostDailyMetric, TransitDeclaratio
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 LATEST_OFFICIAL_REPORT_FROM = date(2026, 1, 1)
 LATEST_OFFICIAL_REPORT_TO = date(2026, 7, 31)
+_analytics_cache: dict[tuple, tuple[float, dict]] = {}
+_analytics_cache_lock = asyncio.Lock()
+ANALYTICS_CACHE_SECONDS = 45
 
 
 def validate_dates(date_from: date, date_to: date) -> None:
@@ -254,7 +260,7 @@ async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, or
     top_pairs = top_rows
     top_corridor = max(features, key=lambda f: f["properties"]["declaration_count"], default=None)
     return {
-        "meta": {"date_from": date_from, "date_to": date_to, "refreshed_at": datetime.utcnow().isoformat() + "Z", "unavailable_count": len(unavailable)},
+        "meta": {"date_from": date_from, "date_to": date_to, "refreshed_at": datetime.now(UTC).isoformat(), "unavailable_count": len(unavailable)},
         "kpis": {"total_declarations": total, "active_corridors": available_corridor_count, "entry_posts": len(entry_counts), "exit_posts": len(exit_counts),
             "top_corridor": top_corridor["properties"]["name"] if top_corridor else "—", "avg_transit_minutes": round(sum((r.avg_seconds or 0) * r.count for r in grouped) / total / 60) if total else 0,
             "change_percent": change},
@@ -266,6 +272,26 @@ async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, or
     }
 
 
+async def cached_analytics_payload(db: AsyncSession, date_from: date, date_to: date, origin: str | None, destination: str | None, entry: str | None, exit: str | None, corridor: str | None, map_mode: str) -> dict:
+    key = (date_from, date_to, origin, destination, entry, exit, corridor, map_mode)
+    cached = _analytics_cache.get(key)
+    now = time.monotonic()
+    if cached and now - cached[0] < ANALYTICS_CACHE_SECONDS:
+        return cached[1]
+    async with _analytics_cache_lock:
+        cached = _analytics_cache.get(key)
+        now = time.monotonic()
+        if cached and now - cached[0] < ANALYTICS_CACHE_SECONDS:
+            return cached[1]
+        value = await analytics_payload(db, date_from, date_to, origin, destination, entry, exit, corridor, map_mode)
+        _analytics_cache[key] = (now, value)
+        if len(_analytics_cache) > 256:
+            expired = sorted(_analytics_cache.items(), key=lambda item: item[1][0])[:64]
+            for old_key, _ in expired:
+                _analytics_cache.pop(old_key, None)
+        return value
+
+
 @router.get("")
 async def analytics(
     response: Response,
@@ -273,22 +299,46 @@ async def analytics(
     date_to: date = Query(default=LATEST_OFFICIAL_REPORT_TO), origin: str | None = None, destination: str | None = None,
     entry: str | None = None, exit: str | None = None, corridor: str | None = None, map_mode: str = Query("posts", pattern="^(posts|top5|all)$"), db: AsyncSession = Depends(get_db),
 ) -> dict:
-    response.headers["Cache-Control"] = "public, max-age=15, stale-while-revalidate=30"
-    return await analytics_payload(db, date_from, date_to, origin, destination, entry, exit, corridor, map_mode)
+    response.headers["Cache-Control"] = "public, max-age=45, stale-while-revalidate=90"
+    return await cached_analytics_payload(db, date_from, date_to, origin, destination, entry, exit, corridor, map_mode)
+
+
+@router.get("/compare")
+async def compare_periods(
+    a_from: date, a_to: date, b_from: date, b_to: date,
+    origin: str | None = None, destination: str | None = None,
+    entry: str | None = None, exit: str | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    validate_dates(a_from, a_to)
+    validate_dates(b_from, b_to)
+    first = await cached_analytics_payload(db, a_from, a_to, origin, destination, entry, exit, None, "posts")
+    second = await cached_analytics_payload(db, b_from, b_to, origin, destination, entry, exit, None, "posts")
+    first_total = first["kpis"]["total_declarations"]
+    second_total = second["kpis"]["total_declarations"]
+    change = round((second_total - first_total) * 100 / first_total, 1) if first_total else (100.0 if second_total else 0.0)
+    return {"period_a": {"meta": first["meta"], "kpis": first["kpis"], "trend": first["trend"]}, "period_b": {"meta": second["meta"], "kpis": second["kpis"], "trend": second["trend"]}, "change_percent": change}
 
 
 @router.get("/export.csv")
 async def export_csv(date_from: date, date_to: date, origin: str | None = None, destination: str | None = None, db: AsyncSession = Depends(get_db)) -> Response:
-    data = await analytics_payload(db, date_from, date_to, origin, destination, None, None, None, "all")
+    validate_dates(date_from, date_to)
+    filters = declaration_filters(date_from, date_to, origin, destination, None, None)
+    rows = (await db.execute(select(
+        TransitDeclaration.entry_post_code,
+        TransitDeclaration.exit_post_code,
+        func.count().label("count"),
+    ).where(*filters).group_by(TransitDeclaration.entry_post_code, TransitDeclaration.exit_post_code).order_by(func.count().desc()))).all()
+    total = sum(row.count for row in rows)
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(["Kirish posti", "Chiqish posti", "Deklaratsiyalar", "Ulush (%)"])
-    for feature in data["corridors"]["features"]:
-        p = feature["properties"]
-        writer.writerow([p["entry_post_code"], p["exit_post_code"], p["declaration_count"], p["percentage_share"]])
-    return Response(output.getvalue(), media_type="text/csv; charset=utf-8", headers={"Content-Disposition": "attachment; filename=transit-analytics.csv"})
+    for row in rows:
+        writer.writerow([row.entry_post_code, row.exit_post_code, row.count, round(row.count * 100 / total, 2) if total else 0])
+    content = "\ufeff" + output.getvalue()
+    return StreamingResponse(iter([content]), media_type="text/csv; charset=utf-8", headers={"Content-Disposition": "attachment; filename=transit-analytics.csv"})
 
 
 @router.get("/corridors.geojson")
 async def export_geojson(date_from: date, date_to: date, db: AsyncSession = Depends(get_db)) -> dict:
-    return (await analytics_payload(db, date_from, date_to, None, None, None, None, None, "all"))["corridors"]
+    return (await cached_analytics_payload(db, date_from, date_to, None, None, None, None, None, "all"))["corridors"]

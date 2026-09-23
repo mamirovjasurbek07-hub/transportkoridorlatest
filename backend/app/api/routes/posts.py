@@ -1,20 +1,19 @@
 from datetime import UTC, datetime
-import hashlib
-import json
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from geoalchemy2.functions import ST_GeomFromGeoJSON, ST_SetSRID, ST_MakePoint
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response, status
+from geoalchemy2.functions import ST_SetSRID, ST_MakePoint
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.dependencies import admin_user, csrf_protect
-from app.models import Corridor, CorridorWaypoint, CustomsPost, User
+from app.dependencies import editor_user, csrf_protect
+from app.jobs import run_route_rebuild
+from app.models import BackgroundJob, Corridor, CorridorWaypoint, CustomsPost, User
 from app.schemas import PostCreate, PostUpdate
 from app.audit import add_audit
-from app.routing import RoutingService
+from app.query_utils import contains_pattern
 
 router = APIRouter(prefix="/posts", tags=["posts"])
 
@@ -31,7 +30,7 @@ def post_dict(p: CustomsPost) -> dict:
     }
 
 
-async def rebuild_post_corridors(db: AsyncSession, post: CustomsPost) -> tuple[int, int]:
+async def queue_post_corridors(db: AsyncSession, post: CustomsPost, user: User) -> tuple[BackgroundJob | None, int]:
     corridors = (await db.scalars(
         select(Corridor)
         .options(selectinload(Corridor.waypoints))
@@ -44,9 +43,8 @@ async def rebuild_post_corridors(db: AsyncSession, post: CustomsPost) -> tuple[i
             ),
         )
     )).unique().all()
-    rebuilt = 0
     review = 0
-    routing = RoutingService(db)
+    rebuild_ids: list[str] = []
     for corridor in corridors:
         matching_waypoints = [point for point in corridor.waypoints if point.post_code == post.post_code]
         if post.latitude is None or post.longitude is None or not matching_waypoints:
@@ -59,31 +57,22 @@ async def rebuild_post_corridors(db: AsyncSession, post: CustomsPost) -> tuple[i
             point.latitude = post.latitude
             point.longitude = post.longitude
             point.location = ST_SetSRID(ST_MakePoint(post.longitude, post.latitude), 4326)
-        ordered = sorted(corridor.waypoints, key=lambda point: point.sequence_no)
-        result = await routing.route([
-            {"latitude": point.latitude, "longitude": point.longitude}
-            for point in ordered
-        ], force=True, profile=corridor.routing_profile)
-        if result and result.available and result.geometry:
-            corridor.geometry = ST_GeomFromGeoJSON(json.dumps(result.geometry))
-            corridor.geometry_hash = hashlib.sha256(json.dumps(result.geometry, sort_keys=True).encode()).hexdigest()
-            corridor.distance_meters = result.distance_meters
-            corridor.duration_seconds = result.duration_seconds
-            corridor.geometry_source = f"post-update-{result.provider}"
-            corridor.routing_provider = result.provider
-            corridor.route_needs_review = False
-            corridor.status = "ACTIVE"
-            rebuilt += 1
-        else:
-            corridor.geometry = None
-            corridor.route_needs_review = True
-            corridor.status = "REVIEW"
-            review += 1
-    return rebuilt, review
+        corridor.geometry = None
+        corridor.route_needs_review = True
+        corridor.status = "REVIEW"
+        review += 1
+        rebuild_ids.append(str(corridor.id))
+    if not rebuild_ids:
+        return None, review
+    job = BackgroundJob(kind="ROUTE_REBUILD", total=len(rebuild_ids), payload={"corridor_ids": rebuild_ids, "routing_profile": "driving", "reason": "post_coordinates_changed"}, created_by=user.id)
+    db.add(job)
+    await db.flush()
+    return job, review
 
 
 @router.get("")
 async def list_posts(
+    response: Response,
     search: str | None = None,
     post_type: str | None = None,
     post_category: str | None = Query(default=None, pattern="^(UNASSIGNED|EXTRA|FIRST|SECOND)$"),
@@ -93,11 +82,13 @@ async def list_posts(
     page_size: int = Query(200, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
+    response.headers["Cache-Control"] = "public, max-age=300, stale-while-revalidate=600" if active_only else "private, no-cache"
     filters = []
     if active_only:
         filters += [CustomsPost.is_active.is_(True), CustomsPost.deleted_at.is_(None)]
     if search:
-        filters.append(or_(CustomsPost.post_code.ilike(f"%{search}%"), CustomsPost.post_name.ilike(f"%{search}%")))
+        pattern = contains_pattern(search)
+        filters.append(or_(CustomsPost.post_code.ilike(pattern, escape="\\"), CustomsPost.post_name.ilike(pattern, escape="\\")))
     if post_type:
         filters.append(CustomsPost.post_type == post_type)
     if post_category:
@@ -110,7 +101,7 @@ async def list_posts(
 
 
 @router.post("", status_code=201, dependencies=[Depends(csrf_protect)])
-async def create_post(payload: PostCreate, request: Request, db: AsyncSession = Depends(get_db), user: User = Depends(admin_user)) -> dict:
+async def create_post(payload: PostCreate, request: Request, db: AsyncSession = Depends(get_db), user: User = Depends(editor_user)) -> dict:
     if await db.scalar(select(CustomsPost.id).where(CustomsPost.post_code == payload.post_code)):
         raise HTTPException(status_code=409, detail="Bu post kodi mavjud")
     values = payload.model_dump()
@@ -126,7 +117,7 @@ async def create_post(payload: PostCreate, request: Request, db: AsyncSession = 
 
 
 @router.patch("/{post_id}", dependencies=[Depends(csrf_protect)])
-async def update_post(post_id: str, payload: PostUpdate, request: Request, db: AsyncSession = Depends(get_db), user: User = Depends(admin_user)) -> dict:
+async def update_post(post_id: str, payload: PostUpdate, request: Request, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db), user: User = Depends(editor_user)) -> dict:
     post = await db.get(CustomsPost, uuid.UUID(post_id))
     if not post:
         raise HTTPException(status_code=404, detail="Post topilmadi")
@@ -142,18 +133,21 @@ async def update_post(post_id: str, payload: PostUpdate, request: Request, db: A
         raise HTTPException(status_code=422, detail="CHBP uchun chegaradosh davlat majburiy")
     if post.post_type == "CHBP" and not (post.allow_passenger_vehicles or post.allow_cargo_vehicles):
         raise HTTPException(status_code=422, detail="Kamida bitta transport turiga ruxsat bering")
-    rebuilt = review = 0
+    job = None
+    review = 0
     if before["latitude"] != post.latitude or before["longitude"] != post.longitude:
-        rebuilt, review = await rebuild_post_corridors(db, post)
-    audit_after = {**changes, "corridors_rebuilt": rebuilt, "corridors_review": review}
+        job, review = await queue_post_corridors(db, post, user)
+    audit_after = {**changes, "route_job_id": str(job.id) if job else None, "corridors_review": review}
     await add_audit(db, request, user, "UPDATE", "customs_post", str(post.id), before=before, after=audit_after)
     await db.commit()
     await db.refresh(post)
-    return {**post_dict(post), "corridors_rebuilt": rebuilt, "corridors_review": review}
+    if job:
+        background_tasks.add_task(run_route_rebuild, job.id)
+    return {**post_dict(post), "route_job_id": str(job.id) if job else None, "corridors_review": review}
 
 
 @router.delete("/{post_id}", dependencies=[Depends(csrf_protect)])
-async def soft_delete_post(post_id: str, request: Request, db: AsyncSession = Depends(get_db), user: User = Depends(admin_user)) -> dict:
+async def soft_delete_post(post_id: str, request: Request, db: AsyncSession = Depends(get_db), user: User = Depends(editor_user)) -> dict:
     post = await db.get(CustomsPost, uuid.UUID(post_id))
     if not post:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post topilmadi")

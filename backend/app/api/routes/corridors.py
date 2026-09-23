@@ -1,16 +1,17 @@
-import hashlib
 import json
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from geoalchemy2.functions import ST_AsGeoJSON, ST_GeomFromGeoJSON, ST_SetSRID, ST_MakePoint
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
+from geoalchemy2.functions import ST_AsGeoJSON
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import noload, selectinload
 
 from app.database import get_db
-from app.dependencies import admin_user, csrf_protect
-from app.models import Corridor, CorridorWaypoint, CustomsPost, User
+from app.corridor_service import apply_route_result, waypoint_model
+from app.dependencies import editor_user, csrf_protect
+from app.jobs import job_payload, run_route_rebuild
+from app.models import BackgroundJob, Corridor, CorridorWaypoint, CustomsPost, User
 from app.schemas import CorridorCreate, CorridorRebuildRequest, CorridorUpdate, RoutePreviewRequest
 from app.routing import RoutingService
 from app.audit import add_audit
@@ -18,9 +19,9 @@ from app.audit import add_audit
 router = APIRouter(prefix="/corridors", tags=["corridors"])
 
 
-async def corridor_dict(db: AsyncSession, corridor: Corridor, include_geometry: bool = True) -> dict:
-    geometry = None
-    if include_geometry and corridor.geometry is not None:
+async def corridor_dict(db: AsyncSession, corridor: Corridor, include_geometry: bool = True, geometry_value: dict | None = None, geometry_loaded: bool = False) -> dict:
+    geometry = geometry_value
+    if include_geometry and not geometry_loaded and corridor.geometry is not None:
         raw = await db.scalar(select(ST_AsGeoJSON(Corridor.geometry)).where(Corridor.id == corridor.id))
         geometry = json.loads(raw) if raw else None
     return {
@@ -54,18 +55,27 @@ async def reload_corridor(db: AsyncSession, corridor_id: uuid.UUID) -> Corridor:
 
 
 @router.get("")
-async def list_corridors(active_only: bool = True, include_geometry: bool = True, db: AsyncSession = Depends(get_db)) -> dict:
+async def list_corridors(response: Response, active_only: bool = True, include_geometry: bool = True, db: AsyncSession = Depends(get_db)) -> dict:
+    response.headers["Cache-Control"] = "public, max-age=300, stale-while-revalidate=600" if active_only and not include_geometry else "private, no-cache"
     query = select(Corridor).order_by(Corridor.priority, Corridor.name)
     if not include_geometry:
         query = query.options(noload(Corridor.waypoints))
     if active_only:
         query = query.where(Corridor.is_active.is_(True))
     rows = (await db.scalars(query)).unique().all()
-    return {"items": [await corridor_dict(db, c, include_geometry=include_geometry) for c in rows], "total": len(rows)}
+    geometry_by_id: dict = {}
+    if include_geometry and rows:
+        geometry_by_id = {
+            corridor_id: json.loads(raw) if raw else None
+            for corridor_id, raw in (await db.execute(
+                select(Corridor.id, ST_AsGeoJSON(Corridor.geometry)).where(Corridor.id.in_([row.id for row in rows]))
+            )).all()
+        }
+    return {"items": [await corridor_dict(db, c, include_geometry=include_geometry, geometry_value=geometry_by_id.get(c.id), geometry_loaded=include_geometry) for c in rows], "total": len(rows)}
 
 
 @router.post("/preview", dependencies=[Depends(csrf_protect)])
-async def preview_route(payload: RoutePreviewRequest, db: AsyncSession = Depends(get_db), _: User = Depends(admin_user)) -> dict:
+async def preview_route(payload: RoutePreviewRequest, db: AsyncSession = Depends(get_db), _: User = Depends(editor_user)) -> dict:
     waypoint_data = await normalized_waypoints(db, payload.waypoints)
     result = await RoutingService(db).route(waypoint_data, payload.force, payload.routing_profile)
     if result.available:
@@ -77,22 +87,6 @@ async def preview_route(payload: RoutePreviewRequest, db: AsyncSession = Depends
         "distance_meters": result.distance_meters, "duration_seconds": result.duration_seconds,
         "provider": result.provider, "cached": result.cached, "message": result.message,
     }
-
-
-def apply_route(corridor: Corridor, result) -> None:
-    if result.available and result.geometry:
-        corridor.geometry = ST_GeomFromGeoJSON(json.dumps(result.geometry))
-        corridor.distance_meters = result.distance_meters
-        corridor.duration_seconds = result.duration_seconds
-        corridor.geometry_hash = hashlib.sha256(json.dumps(result.geometry, sort_keys=True).encode()).hexdigest()
-        corridor.routing_provider = result.provider
-        corridor.geometry_source = f"{result.provider}-router"
-        corridor.route_needs_review = False
-        if corridor.status in ("DRAFT", "REVIEW"):
-            corridor.status = "ACTIVE"
-    else:
-        corridor.route_needs_review = True
-        corridor.status = "REVIEW"
 
 
 async def normalized_waypoints(db: AsyncSession, waypoints) -> list[dict]:
@@ -131,7 +125,7 @@ async def validate_posts(db: AsyncSession, entry: str, exit: str) -> None:
 
 
 @router.post("", status_code=201, dependencies=[Depends(csrf_protect)])
-async def create_corridor(payload: CorridorCreate, request: Request, db: AsyncSession = Depends(get_db), user: User = Depends(admin_user)) -> dict:
+async def create_corridor(payload: CorridorCreate, request: Request, db: AsyncSession = Depends(get_db), user: User = Depends(editor_user)) -> dict:
     await validate_posts(db, payload.entry_post_code, payload.exit_post_code)
     waypoint_data = await normalized_waypoints(db, payload.waypoints)
     if await db.scalar(select(Corridor.id).where(Corridor.code == payload.code)):
@@ -141,15 +135,10 @@ async def create_corridor(payload: CorridorCreate, request: Request, db: AsyncSe
     db.add(corridor)
     await db.flush()
     for data in waypoint_data:
-        data = dict(data)
-        if data["gateway_id"]:
-            data["gateway_id"] = uuid.UUID(data["gateway_id"])
-        point = CorridorWaypoint(corridor_id=corridor.id, **data)
-        point.location = ST_SetSRID(ST_MakePoint(point.longitude, point.latitude), 4326)
-        db.add(point)
+        db.add(waypoint_model(corridor.id, data))
     if payload.build_route:
         result = await RoutingService(db).route(waypoint_data, profile=payload.routing_profile)
-        apply_route(corridor, result)
+        apply_route_result(corridor, result)
     corridor_id_value = corridor.id
     await add_audit(db, request, user, "CREATE", "corridor", str(corridor_id_value), after={"code": corridor.code, "name": corridor.name})
     await db.commit()
@@ -157,7 +146,7 @@ async def create_corridor(payload: CorridorCreate, request: Request, db: AsyncSe
 
 
 @router.patch("/{corridor_id}", dependencies=[Depends(csrf_protect)])
-async def update_corridor(corridor_id: str, payload: CorridorUpdate, request: Request, db: AsyncSession = Depends(get_db), user: User = Depends(admin_user)) -> dict:
+async def update_corridor(corridor_id: str, payload: CorridorUpdate, request: Request, db: AsyncSession = Depends(get_db), user: User = Depends(editor_user)) -> dict:
     corridor = await db.scalar(select(Corridor).options(selectinload(Corridor.waypoints)).where(Corridor.id == corridor_id))
     if not corridor:
         raise HTTPException(status_code=404, detail="Korridor topilmadi")
@@ -182,15 +171,10 @@ async def update_corridor(corridor_id: str, payload: CorridorUpdate, request: Re
             await db.delete(existing)
         await db.flush()
         for waypoint in waypoint_data:
-            item = dict(waypoint)
-            if item["gateway_id"]:
-                item["gateway_id"] = uuid.UUID(item["gateway_id"])
-            point = CorridorWaypoint(corridor_id=corridor.id, **item)
-            point.location = ST_SetSRID(ST_MakePoint(point.longitude, point.latitude), 4326)
-            db.add(point)
+            db.add(waypoint_model(corridor.id, waypoint))
         if payload.rebuild_route:
             result = await RoutingService(db).route(waypoint_data, force=True, profile=corridor.routing_profile)
-            apply_route(corridor, result)
+            apply_route_result(corridor, result)
     corridor_id_value = corridor.id
     await add_audit(db, request, user, "UPDATE", "corridor", str(corridor_id_value), before=before, after=changes)
     await db.commit()
@@ -198,41 +182,33 @@ async def update_corridor(corridor_id: str, payload: CorridorUpdate, request: Re
 
 
 @router.post("/rebuild-road-geometries", dependencies=[Depends(csrf_protect)])
-async def rebuild_road_geometries(payload: CorridorRebuildRequest, request: Request, db: AsyncSession = Depends(get_db), user: User = Depends(admin_user)) -> dict:
+async def rebuild_road_geometries(payload: CorridorRebuildRequest, request: Request, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db), user: User = Depends(editor_user)) -> dict:
     ids: list[uuid.UUID] = []
     for item in payload.corridor_ids:
         try:
             ids.append(uuid.UUID(item))
         except ValueError as exc:
             raise HTTPException(status_code=422, detail="Korridor identifikatori noto'g'ri") from exc
-    corridors = (await db.scalars(
-        select(Corridor).options(selectinload(Corridor.waypoints)).where(Corridor.id.in_(ids)).order_by(Corridor.priority, Corridor.code)
-    )).unique().all()
-    updated: list[str] = []
-    failed: list[dict] = []
-    service = RoutingService(db)
-    for corridor in corridors:
-        ordered = sorted(corridor.waypoints, key=lambda w: w.sequence_no)
-        if len(ordered) < 2:
-            corridor.route_needs_review = True
-            corridor.status = "REVIEW"
-            failed.append({"id": str(corridor.id), "code": corridor.code, "message": "Kamida 2 ta waypoint kerak"})
-            continue
-        waypoint_data = [{"latitude": w.latitude, "longitude": w.longitude} for w in ordered]
-        result = await service.route(waypoint_data, force=True, profile=payload.routing_profile)
-        apply_route(corridor, result)
-        corridor.routing_profile = payload.routing_profile
-        if result.available:
-            updated.append(str(corridor.id))
-        else:
-            failed.append({"id": str(corridor.id), "code": corridor.code, "message": result.message})
-    await add_audit(db, request, user, "REBUILD_ROUTES", "corridor", None, after={"requested": len(ids), "updated": len(updated), "failed": len(failed), "provider": RoutingService._provider()})
+    existing_ids = set((await db.scalars(select(Corridor.id).where(Corridor.id.in_(ids)))).all())
+    if not existing_ids:
+        raise HTTPException(status_code=404, detail="Korridorlar topilmadi")
+    job = BackgroundJob(
+        kind="ROUTE_REBUILD",
+        total=len(existing_ids),
+        payload={"corridor_ids": [str(item) for item in existing_ids], "routing_profile": payload.routing_profile},
+        created_by=user.id,
+    )
+    db.add(job)
+    await db.flush()
+    await add_audit(db, request, user, "REBUILD_ROUTES_QUEUED", "background_job", str(job.id), after={"requested": len(existing_ids), "profile": payload.routing_profile})
     await db.commit()
-    return {"requested": len(ids), "processed": len(corridors), "updated": updated, "failed": failed, "provider": RoutingService._provider()}
+    await db.refresh(job)
+    background_tasks.add_task(run_route_rebuild, job.id)
+    return job_payload(job)
 
 
 @router.delete("/{corridor_id}", dependencies=[Depends(csrf_protect)])
-async def deactivate_corridor(corridor_id: str, request: Request, db: AsyncSession = Depends(get_db), user: User = Depends(admin_user)) -> dict:
+async def deactivate_corridor(corridor_id: str, request: Request, db: AsyncSession = Depends(get_db), user: User = Depends(editor_user)) -> dict:
     corridor = await db.get(Corridor, uuid.UUID(corridor_id))
     if not corridor:
         raise HTTPException(status_code=404, detail="Korridor topilmadi")
