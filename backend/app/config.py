@@ -69,8 +69,8 @@ class Settings(BaseSettings):
     def secure_production_settings(self) -> "Settings":
         if self.app_env != "production":
             return self
-        if self.secret_key == "development-only-secret-change-before-production" or len(self.secret_key) < 32:
-            raise ValueError("Production uchun kamida 32 belgili noyob SECRET_KEY talab qilinadi")
+        if not self.secret_key.strip() or self.secret_key == "development-only-secret-change-before-production":
+            raise ValueError("Production uchun noyob SECRET_KEY talab qilinadi")
         if self.admin_initial_password == "CHANGE_ME_NOW":
             raise ValueError("Production uchun ADMIN_INITIAL_PASSWORD almashtirilishi kerak")
         if not self.cookie_secure:
