@@ -36,6 +36,9 @@ class User(Base, TimestampMixin):
     role: Mapped[str] = mapped_column(String(20), default="ADMIN")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    password_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    totp_secret: Mapped[str | None] = mapped_column(String(80))
+    totp_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
 
 class CustomsPost(Base, TimestampMixin):
@@ -204,3 +207,56 @@ class AppSetting(Base):
     value: Mapped[dict[str, Any]] = mapped_column(JSONB)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     updated_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
+
+
+class BackgroundJob(Base, TimestampMixin):
+    __tablename__ = "background_jobs"
+    __table_args__ = (
+        Index("ix_background_jobs_status_created", "status", "created_at"),
+        Index("ix_background_jobs_kind_created", "kind", "created_at"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    kind: Mapped[str] = mapped_column(String(50))
+    status: Mapped[str] = mapped_column(String(20), default="PENDING", server_default="PENDING")
+    progress: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    total: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default="{}")
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    error: Mapped[str | None] = mapped_column(Text)
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class DataImport(Base, TimestampMixin):
+    __tablename__ = "data_imports"
+    __table_args__ = (Index("ix_data_imports_created_status", "created_at", "status"),)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    import_type: Mapped[str] = mapped_column(String(40))
+    filename: Mapped[str] = mapped_column(String(255))
+    status: Mapped[str] = mapped_column(String(20), default="COMPLETED")
+    rows_total: Mapped[int] = mapped_column(Integer, default=0)
+    rows_imported: Mapped[int] = mapped_column(Integer, default=0)
+    rows_rejected: Mapped[int] = mapped_column(Integer, default=0)
+    errors: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list, server_default="[]")
+    created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+
+
+class SavedFilter(Base, TimestampMixin):
+    __tablename__ = "saved_filters"
+    __table_args__ = (UniqueConstraint("user_id", "name", name="uq_saved_filter_user_name"),)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    filters: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    is_shared: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+
+
+class AlertAcknowledgement(Base):
+    __tablename__ = "alert_acknowledgements"
+    __table_args__ = (UniqueConstraint("user_id", "alert_key", name="uq_alert_ack_user_key"),)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    alert_key: Mapped[str] = mapped_column(String(160), index=True)
+    acknowledged_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

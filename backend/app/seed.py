@@ -473,6 +473,27 @@ async def seed_official_chbp_vehicle_metrics(db: AsyncSession) -> int:
     return rows
 
 
+async def ensure_initial_admin(db: AsyncSession) -> bool:
+    """Create a recovery administrator only when no active administrator exists."""
+    active_admin = await db.scalar(select(User.id).where(User.role == "ADMIN", User.is_active.is_(True)).limit(1))
+    if active_admin:
+        return False
+    email = settings.admin_initial_email.strip().lower()
+    user = await db.scalar(select(User).where(func.lower(User.email) == email))
+    if user is None:
+        user = User(email=email, password_hash=hash_password(settings.admin_initial_password), role="ADMIN", is_active=True)
+        db.add(user)
+        action = "created"
+    else:
+        user.role = "ADMIN"
+        user.is_active = True
+        user.password_hash = hash_password(settings.admin_initial_password)
+        action = "recovered"
+    await db.commit()
+    await logger.ainfo("initial_admin_ready", action=action, email=email)
+    return True
+
+
 async def seed_all(db: AsyncSession) -> None:
     # This application currently manages the bootstrap administrator through
     # Render environment variables. Keep the single existing admin in sync so

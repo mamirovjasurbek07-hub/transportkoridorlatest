@@ -26,8 +26,12 @@ class Settings(BaseSettings):
     yandex_router_enabled: bool = False
     yandex_router_api_key: str = ""
     yandex_router_base_url: str = "https://api.routing.yandex.net/v2/route"
-    routing_timeout_seconds: int = 30
-    enable_demo_seed: bool = True
+    routing_timeout_seconds: int = 12
+    route_cache_days: int = 30
+    enable_demo_seed: bool = False
+    seed_on_startup: bool = False
+    audit_retention_days: int = 180
+    public_visit_dedupe_minutes: int = 10
     cookie_secure: bool = False
     cookie_samesite: Literal["lax", "strict", "none"] = "lax"
     access_token_minutes: int = 480
@@ -75,6 +79,8 @@ class Settings(BaseSettings):
             raise ValueError("Production uchun ADMIN_INITIAL_PASSWORD almashtirilishi kerak")
         if not self.cookie_secure:
             raise ValueError("Production uchun COOKIE_SECURE=true bo'lishi kerak")
+        if self.seed_on_startup:
+            raise ValueError("Productionda SEED_ON_STARTUP=false bo'lishi kerak; seedni alohida ishga tushiring")
         return self
 
     @property

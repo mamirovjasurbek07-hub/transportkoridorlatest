@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import json
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 
 import httpx
 from geoalchemy2.functions import ST_AsGeoJSON, ST_GeomFromGeoJSON
@@ -9,7 +10,28 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models import RouteCache
+from app.models import AppSetting, RouteCache
+
+_http_client: httpx.AsyncClient | None = None
+
+
+def routing_http_client() -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(
+            timeout=settings.routing_timeout_seconds,
+            follow_redirects=True,
+            headers={"User-Agent": f"transport-corridors/1.1 ({settings.frontend_url})"},
+            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+        )
+    return _http_client
+
+
+async def close_routing_http_client() -> None:
+    global _http_client
+    if _http_client is not None and not _http_client.is_closed:
+        await _http_client.aclose()
+    _http_client = None
 
 
 @dataclass
@@ -29,7 +51,7 @@ class RoutingService:
 
     @staticmethod
     def _hash(waypoints: list[dict], provider: str | None = None, profile: str | None = None) -> tuple[str, str]:
-        provider = provider or RoutingService._provider()
+        provider = provider or settings.routing_provider.lower()
         profile = profile or settings.routing_profile
         normalized = [[round(float(w["longitude"]), 5), round(float(w["latitude"]), 5)] for w in waypoints]
         waypoints_hash = hashlib.sha256(json.dumps(normalized, separators=(",", ":")).encode()).hexdigest()
@@ -42,12 +64,24 @@ class RoutingService:
             return "yandex"
         return "osrm"
 
+    async def _runtime_provider(self) -> str:
+        configured = settings.routing_provider.lower()
+        ui = await self.db.get(AppSetting, "ui")
+        if ui and isinstance(ui.value, dict):
+            requested = str(ui.value.get("routing_provider", configured)).lower()
+            if requested in {"osrm", "yandex"}:
+                configured = requested
+        if settings.yandex_router_enabled and configured == "yandex" and settings.yandex_router_api_key.strip():
+            return "yandex"
+        return "osrm"
+
     async def route(self, waypoints: list[dict], force: bool = False, profile: str | None = None) -> RoutingResult:
-        provider = self._provider()
+        provider = await self._runtime_provider()
         requested_profile = profile or settings.routing_profile
         waypoints_hash, cache_key = self._hash(waypoints, provider, requested_profile)
         cached = await self.db.scalar(select(RouteCache).where(RouteCache.cache_key == cache_key))
-        if not force and cached:
+        cache_is_fresh = cached is not None and (cached.expires_at is None or cached.expires_at > datetime.now(UTC))
+        if not force and cache_is_fresh:
             raw_geometry = await self.db.scalar(select(ST_AsGeoJSON(cached.geometry)).where(RouteCache.id == cached.id))
             return RoutingResult(True, json.loads(raw_geometry), cached.distance_meters, cached.duration_seconds, cached.provider, True)
 
@@ -63,6 +97,7 @@ class RoutingService:
             cache.duration_seconds = duration
             cache.provider = provider
             cache.profile = profile
+            cache.expires_at = datetime.now(UTC) + timedelta(days=settings.route_cache_days)
         else:
             cache = RouteCache(
                 cache_key=cache_key,
@@ -72,23 +107,24 @@ class RoutingService:
                 geometry=ST_GeomFromGeoJSON(json.dumps(geometry)),
                 distance_meters=distance,
                 duration_seconds=duration,
+                expires_at=datetime.now(UTC) + timedelta(days=settings.route_cache_days),
             )
             self.db.add(cache)
         await self.db.flush()
         return cache
 
     async def _route_osrm(self, waypoints: list[dict], waypoints_hash: str, cache_key: str, cached: RouteCache | None, profile: str) -> RoutingResult:
-
+        if profile == "truck":
+            return RoutingResult(False, None, None, None, "osrm", message="OSRM public xizmati truck profilini qo'llamaydi. Yandex Router truck rejimini yoqing yoki driving profilini tanlang.")
         coords = ";".join(f'{w["longitude"]},{w["latitude"]}' for w in waypoints)
         url = f"{settings.routing_base_url.rstrip('/')}/route/v1/driving/{coords}"
         params = {"overview": "full", "geometries": "geojson", "steps": "false"}
         last_error = "Routing xizmati javob bermadi"
         for attempt in range(2):
             try:
-                async with httpx.AsyncClient(timeout=settings.routing_timeout_seconds, headers={"User-Agent": f"transport-corridors/1.0 ({settings.frontend_url})"}) as client:
-                    response = await client.get(url, params=params)
-                    response.raise_for_status()
-                    payload = response.json()
+                response = await routing_http_client().get(url, params=params)
+                response.raise_for_status()
+                payload = response.json()
                 if payload.get("code") != "Ok" or not payload.get("routes"):
                     return RoutingResult(False, None, None, None, "osrm", message="Avtomobil yo'li topilmadi")
                 route = payload["routes"][0]
@@ -98,7 +134,7 @@ class RoutingService:
             except (httpx.HTTPError, KeyError, ValueError) as exc:
                 last_error = str(exc)
                 if attempt == 0:
-                    await asyncio.sleep(0.35)
+                    await asyncio.sleep(0.2)
         return RoutingResult(False, None, None, None, "osrm", message=f"Routing vaqtincha mavjud emas: {last_error[:120]}")
 
     async def _route_yandex(self, waypoints: list[dict], waypoints_hash: str, cache_key: str, cached: RouteCache | None, profile: str) -> RoutingResult:
@@ -113,8 +149,7 @@ class RoutingService:
         last_error = "Yandex Router javob bermadi"
         for attempt in range(2):
             try:
-                async with httpx.AsyncClient(timeout=settings.routing_timeout_seconds) as client:
-                    response = await client.get(settings.yandex_router_base_url, params=params)
+                response = await routing_http_client().get(settings.yandex_router_base_url, params=params)
                 if response.status_code >= 400:
                     last_error = f"Yandex Router HTTP {response.status_code}"
                     if response.status_code in (400, 401, 403, 429):
@@ -142,5 +177,5 @@ class RoutingService:
                 return RoutingResult(True, geometry, cache.distance_meters, cache.duration_seconds, "yandex")
             except (httpx.HTTPError, KeyError, TypeError, ValueError, json.JSONDecodeError):
                 if attempt == 0:
-                    await asyncio.sleep(0.35)
+                    await asyncio.sleep(0.2)
         return RoutingResult(False, None, None, None, "yandex", message=last_error)

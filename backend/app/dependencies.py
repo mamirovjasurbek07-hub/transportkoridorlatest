@@ -51,6 +51,12 @@ async def admin_user(user: User = Depends(current_user)) -> User:
     return user
 
 
+async def editor_user(user: User = Depends(current_user)) -> User:
+    if user.role not in {"ADMIN", "EDITOR"}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Tahrirlash huquqi talab qilinadi")
+    return user
+
+
 async def csrf_protect(
     request: Request,
     x_csrf_token: str | None = Header(default=None),

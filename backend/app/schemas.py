@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 class LoginRequest(BaseModel):
     email: str = Field(min_length=3, max_length=255)
     password: str = Field(min_length=8, max_length=200)
+    otp: str | None = Field(default=None, min_length=6, max_length=8)
 
     @field_validator("email")
     @classmethod
@@ -28,6 +29,33 @@ class LoginResponse(BaseModel):
     user: UserRead
     csrf_token: str
     password_change_recommended: bool
+
+
+class PasswordChangeRequest(BaseModel):
+    current_password: str = Field(min_length=8, max_length=200)
+    new_password: str = Field(min_length=12, max_length=200)
+
+
+class TotpCodeRequest(BaseModel):
+    code: str = Field(min_length=6, max_length=8)
+
+
+class UserCreate(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+    password: str = Field(min_length=12, max_length=200)
+    role: Literal["ADMIN", "EDITOR", "VIEWER"] = "VIEWER"
+
+
+class UserUpdate(BaseModel):
+    role: Literal["ADMIN", "EDITOR", "VIEWER"] | None = None
+    is_active: bool | None = None
+    password: str | None = Field(default=None, min_length=12, max_length=200)
+
+
+class SavedFilterCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+    filters: dict
+    is_shared: bool = False
 
 
 PostType = Literal["CHBP", "TIF", "AERO", "RW", "PORT"]
@@ -154,7 +182,7 @@ class RoutePreviewRequest(BaseModel):
 
 
 class CorridorRebuildRequest(BaseModel):
-    corridor_ids: list[str] = Field(min_length=1, max_length=10)
+    corridor_ids: list[str] = Field(min_length=1, max_length=500)
     routing_profile: Literal["driving", "truck"] = "driving"
 
 
