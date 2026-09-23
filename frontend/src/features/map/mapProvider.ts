@@ -7,6 +7,8 @@ export interface PublicMapConfig {
   yandex_maps_api_key?: string
   routing_provider: 'osrm' | 'yandex'
   routing_profile: 'driving' | 'truck'
+  animation_corridor_limit: number
+  yandex_router_available?: boolean
 }
 
 type YandexApi = Record<string, any>
@@ -26,7 +28,7 @@ export function getMapConfig(): Promise<PublicMapConfig> {
 
 export function useMapProvider(): PublicMapConfig | null {
   const [config, setConfig] = useState<PublicMapConfig | null>(null)
-  useEffect(() => { let live = true; void getMapConfig().then((value) => live && setConfig(value)).catch(() => live && setConfig({ provider: 'osm', requested_provider: 'osm', routing_provider: 'osrm', routing_profile: 'driving' })); return () => { live = false } }, [])
+  useEffect(() => { let live = true; void getMapConfig().then((value) => live && setConfig(value)).catch(() => live && setConfig({ provider: 'osm', requested_provider: 'osm', routing_provider: 'osrm', routing_profile: 'driving', animation_corridor_limit: 100, yandex_router_available: false })); return () => { live = false } }, [])
   return config
 }
 

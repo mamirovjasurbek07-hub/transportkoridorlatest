@@ -133,12 +133,13 @@ function addUzbekistanBorder(ymaps: AnyObject, map: AnyObject, isAlive: () => bo
   }).catch(() => { /* The map remains usable when the optional border cannot load. */ })
 }
 
-export function YandexTransitMap({ apiKey, posts = empty, corridors = empty, selectedId, onCorridorSelect, loading }: { apiKey: string; posts?: FeatureCollection; corridors?: FeatureCollection; selectedId?: string | null; onCorridorSelect?: (properties: Record<string, unknown> | null) => void; loading?: boolean }) {
+export function YandexTransitMap({ apiKey, posts = empty, corridors = empty, selectedId, onCorridorSelect, loading, focusPost }: { apiKey: string; posts?: FeatureCollection; corridors?: FeatureCollection; selectedId?: string | null; onCorridorSelect?: (properties: Record<string, unknown> | null) => void; loading?: boolean; focusPost?: { latitude: number; longitude: number } | null }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<AnyObject | null>(null)
   const ymapsRef = useRef<AnyObject | null>(null)
   const corridorObjects = useRef<AnyObject | null>(null)
   const postObjects = useRef<AnyObject | null>(null)
+  const postMarkersRef = useRef<Map<string, { marker: AnyObject; signature: string }>>(new Map())
   const corridorLinesRef = useRef<Map<string, { line: AnyObject; color: string; width: number }>>(new Map())
   const lastFitKeyRef = useRef('')
   const [ready, setReady] = useState(false)
@@ -170,7 +171,7 @@ export function YandexTransitMap({ apiKey, posts = empty, corridors = empty, sel
       stopResize = observeMapSize(containerRef.current, map, isAlive)
       setReady(true)
     }).catch(() => { if (live) setReady(false) })
-    return () => { live = false; stopResize?.(); const map = mapRef.current; mapRef.current = null; ymapsRef.current = null; corridorObjects.current = null; postObjects.current = null; corridorLinesRef.current.clear(); try { map?.behaviors?.disable('drag') } catch { /* already inactive */ }; map?.destroy() }
+    return () => { live = false; stopResize?.(); const map = mapRef.current; mapRef.current = null; ymapsRef.current = null; corridorObjects.current = null; postObjects.current = null; corridorLinesRef.current.clear(); postMarkersRef.current.clear(); try { map?.behaviors?.disable('drag') } catch { /* already inactive */ }; map?.destroy() }
   }, [apiKey])
 
   useEffect(() => {
@@ -214,7 +215,10 @@ export function YandexTransitMap({ apiKey, posts = empty, corridors = empty, sel
     const ymaps = ymapsRef.current
     const collection = postObjects.current
     if (!ready || !ymaps || !collection) return
-    collection.removeAll()
+    const activeIds = new Set(posts.features.map((feature) => String(feature.properties?.id || '')))
+    for (const [id, item] of postMarkersRef.current) {
+      if (!activeIds.has(id)) { collection.remove(item.marker); postMarkersRef.current.delete(id) }
+    }
     for (const feature of posts.features) {
       if (feature.geometry.type !== 'Point') continue
       const [lng, lat] = feature.geometry.coordinates
@@ -223,6 +227,11 @@ export function YandexTransitMap({ apiKey, posts = empty, corridors = empty, sel
       const flow = Number(p.total_flow || 0)
       const color = p.post_type === 'CHBP' ? '#fb4058' : p.post_type === 'PORT' ? '#34d399' : p.post_type === 'TIF' ? '#a78bfa' : '#38bdf8'
       const size = sphereSize(p)
+      const id = String(p.id || `${lng},${lat}`)
+      const signature = `${lng}|${lat}|${size}|${color}|${flow}`
+      const existing = postMarkersRef.current.get(id)
+      if (existing?.signature === signature) continue
+      if (existing) collection.remove(existing.marker)
       const marker = new ymaps.Placemark([lat, lng], { balloonContent: balloon, hintContent: balloon }, { iconLayout: 'default#image', iconImageHref: sphereIcon(size, color), iconImageSize: [size, size], iconImageOffset: [-size / 2, -size / 2], zIndex: 400 + Math.min(flow, 10_000), balloonMinWidth: 500, balloonMaxWidth: 520, balloonMaxHeight: 560 })
       marker.events.add('balloonopen', () => window.setTimeout(() => {
         document.querySelectorAll<HTMLButtonElement>(`[data-post-id="${String(p.id)}"] .passport-close`).forEach((close) => {
@@ -230,10 +239,12 @@ export function YandexTransitMap({ apiKey, posts = empty, corridors = empty, sel
         })
       }, 0))
       collection.add(marker)
+      postMarkersRef.current.set(id, { marker, signature })
     }
   }, [posts, ready])
 
   useEffect(() => { if (ready) setTimeout(() => mapRef.current?.container.fitToViewport(), 0) }, [fullscreen, ready])
+  useEffect(() => { if (ready && focusPost) mapRef.current?.setCenter([focusPost.latitude, focusPost.longitude], 11, { duration: 500 }) }, [focusPost, ready])
   return <div className={`transit-map ${fullscreen ? 'is-fullscreen' : ''}`}>
     <div ref={containerRef} className="map-canvas yandex-map" aria-label="Yandex xaritasidagi tranzit yo'laklari" />
     {loading && <div className="map-progress"><span /></div>}

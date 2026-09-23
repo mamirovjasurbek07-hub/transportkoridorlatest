@@ -13,14 +13,16 @@ interface Props {
   selectedId?: string | null
   onCorridorSelect?: (properties: Record<string, unknown> | null) => void
   loading?: boolean
+  focusPost?: { latitude: number; longitude: number } | null
 }
 
 const empty: FeatureCollection = { type: 'FeatureCollection', features: [] }
 
-function MapLibreTransitMap({ posts = empty, corridors = empty, selectedId, onCorridorSelect, loading }: Props) {
+function MapLibreTransitMap({ posts = empty, corridors = empty, selectedId, onCorridorSelect, loading, focusPost, animationLimit = 100 }: Props & { animationLimit?: number }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<Map | null>(null)
   const popupRef = useRef<Popup | null>(null)
+  const lastFitKeyRef = useRef('')
   const [ready, setReady] = useState(false)
   const [fullscreen, setFullscreen] = useState(false)
 
@@ -97,12 +99,16 @@ function MapLibreTransitMap({ posts = empty, corridors = empty, selectedId, onCo
   useEffect(() => {
     if (!ready) return
     ;(mapRef.current?.getSource('corridors') as GeoJSONSource)?.setData(corridors)
-    if (corridors.features.length) {
+    mapRef.current?.setLayoutProperty('corridor-flow', 'visibility', corridors.features.length <= animationLimit ? 'visible' : 'none')
+    const fitKey = corridors.features.map((feature) => String(feature.properties?.id || '')).join('|')
+    if (corridors.features.length && fitKey !== lastFitKeyRef.current) {
       const bounds = bbox(corridors) as [number, number, number, number]
       mapRef.current?.fitBounds([[bounds[0], bounds[1]], [bounds[2], bounds[3]]], { padding: 70, duration: 600, maxZoom: 8 })
     }
-  }, [corridors, ready])
+    lastFitKeyRef.current = fitKey
+  }, [animationLimit, corridors, ready])
   useEffect(() => { if (ready) mapRef.current?.setFilter('selected-corridor', ['==', ['get', 'id'], selectedId || '']) }, [selectedId, ready])
+  useEffect(() => { if (ready && focusPost) mapRef.current?.flyTo({ center: [focusPost.longitude, focusPost.latitude], zoom: 11, duration: 700 }) }, [focusPost, ready])
 
   return (
     <div className={`transit-map ${fullscreen ? 'is-fullscreen' : ''}`}>
@@ -120,5 +126,5 @@ function MapLibreTransitMap({ posts = empty, corridors = empty, selectedId, onCo
 export default function TransitMap(props: Props) {
   const config = useMapProvider()
   if (config?.provider === 'yandex' && config.yandex_maps_api_key) return <YandexTransitMap apiKey={config.yandex_maps_api_key} {...props}/>
-  return <MapLibreTransitMap {...props}/>
+  return <MapLibreTransitMap {...props} animationLimit={config?.animation_corridor_limit || 100}/>
 }
