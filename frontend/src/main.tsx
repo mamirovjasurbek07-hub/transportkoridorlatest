@@ -5,9 +5,16 @@ import { BrowserRouter } from 'react-router-dom'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import './global.css'
 import App from './App'
+import { ApiError } from './api'
 
 const queryClient = new QueryClient({
-  defaultOptions: { queries: { staleTime: 45_000, retry: 1, refetchOnWindowFocus: false } },
+  defaultOptions: {
+    queries: {
+      staleTime: 45_000,
+      retry: (failureCount, error) => error instanceof ApiError && error.code === 'DATABASE_UNAVAILABLE' ? false : failureCount < 1,
+      refetchOnWindowFocus: false,
+    },
+  },
 })
 
 createRoot(document.getElementById('root')!).render(

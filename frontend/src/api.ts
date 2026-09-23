@@ -11,8 +11,9 @@ function cookie(name: string): string {
 }
 
 export class ApiError extends Error {
-  constructor(public status: number, message: string, public details?: unknown) {
+  constructor(public status: number, message: string, public details?: unknown, public code?: string) {
     super(message)
+    this.name = 'ApiError'
   }
 }
 
@@ -26,7 +27,7 @@ export async function api<T>(path: string, init: RequestInit = {}, signal?: Abor
     const body = await response.json().catch(() => null)
     const payload = body?.error
     if (response.status === 401 && location.pathname.startsWith('/admin') && location.pathname !== '/admin/login') location.assign('/admin/login')
-    throw new ApiError(response.status, payload?.message || `So'rov bajarilmadi (${response.status})`, payload?.details)
+    throw new ApiError(response.status, payload?.message || `So'rov bajarilmadi (${response.status})`, payload?.details, payload?.code)
   }
   if (response.status === 204) return undefined as T
   return response.json() as Promise<T>
