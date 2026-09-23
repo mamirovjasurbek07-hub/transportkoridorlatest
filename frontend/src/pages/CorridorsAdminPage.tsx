@@ -13,7 +13,7 @@ type MarkMode = Waypoint['waypoint_type']
 interface FormState { code: string; name: string; origin_country_code: string; destination_country_code: string; entry_post_code: string; exit_post_code: string; status: string; color: string; routing_profile: 'driving' | 'truck'; priority: number; is_active: boolean; waypoints: Waypoint[] }
 interface PreviewResult { status: string; geometry?: GeoJSON.LineString; distance_meters?: number; duration_seconds?: number; provider: string; cached: boolean; message?: string }
 interface PreviewVariables { force: boolean; silent: boolean; signature: string; waypoints: Waypoint[]; routingProfile: FormState['routing_profile'] }
-interface RebuildResult { requested: number; processed: number; updated: string[]; failed: Array<{ id: string; code: string; message: string }>; provider: string }
+interface RebuildJob { id: string; status: string; progress: number; total: number }
 
 const blank = (): FormState => ({ code: '', name: '', origin_country_code: '', destination_country_code: '', entry_post_code: '', exit_post_code: '', status: 'DRAFT', color: '#22d3ee', routing_profile: 'driving', priority: 100, is_active: true, waypoints: [] })
 const markLabels: Record<MarkMode, string> = { ORIGIN_GATEWAY: 'Boshlanish', ENTRY_POST: 'Kirish posti', VIA: 'Oraliq / TIF', EXIT_POST: 'Chiqish posti', DESTINATION_GATEWAY: 'Tugash' }
@@ -113,28 +113,22 @@ export default function CorridorsAdminPage() {
     mutationFn: () => editing
       ? api(`/corridors/${editing.id}`, { method: 'PATCH', body: JSON.stringify({ name: form.name, origin_country_code: form.origin_country_code, destination_country_code: form.destination_country_code, entry_post_code: form.entry_post_code, exit_post_code: form.exit_post_code, status: form.status, color: form.color, routing_profile: form.routing_profile, priority: form.priority, is_active: form.is_active, waypoints: form.waypoints, rebuild_route: true }) })
       : api('/corridors', { method: 'POST', body: JSON.stringify({ ...form, build_route: true }) }),
-    onSuccess: () => { void client.invalidateQueries({ queryKey: ['admin-corridors'] }); void client.invalidateQueries({ queryKey: ['corridors-public'] }); void client.invalidateQueries({ queryKey: ['analytics'] }); close(); setToast({ type: 'success', message: "Corridor va uning barcha nuqtalari bazaga saqlandi" }) },
+    onSuccess: () => { void client.invalidateQueries({ queryKey: ['admin-corridors'] }); void client.invalidateQueries({ queryKey: ['public-catalog'] }); void client.invalidateQueries({ queryKey: ['analytics'] }); close(); setToast({ type: 'success', message: "Corridor va uning barcha nuqtalari bazaga saqlandi" }) },
     onError: (error) => setToast({ type: 'error', message: error instanceof ApiError ? error.message : 'Saqlashda xato' }),
   })
-  const remove = useMutation({ mutationFn: (id: string) => api(`/corridors/${id}`, { method: 'DELETE' }), onSuccess: () => { void client.invalidateQueries({ queryKey: ['admin-corridors'] }); setToast({ type: 'success', message: 'Corridor nofaol qilindi' }) } })
+  const remove = useMutation({ mutationFn: (id: string) => api(`/corridors/${id}`, { method: 'DELETE' }), onSuccess: () => { void client.invalidateQueries({ queryKey: ['admin-corridors'] }); void client.invalidateQueries({ queryKey: ['public-catalog'] }); setToast({ type: 'success', message: 'Corridor nofaol qilindi' }) } })
   const rename = useMutation({
     mutationFn: ({ id, name }: { id: string; name: string }) => api(`/corridors/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
-    onSuccess: () => { void client.invalidateQueries({ queryKey: ['admin-corridors'] }); void client.invalidateQueries({ queryKey: ['corridors-public'] }); void client.invalidateQueries({ queryKey: ['analytics'] }); setRenaming(null); setRenameValue(''); setToast({ type: 'success', message: 'Corridor nomi yangilandi' }) },
+    onSuccess: () => { void client.invalidateQueries({ queryKey: ['admin-corridors'] }); void client.invalidateQueries({ queryKey: ['public-catalog'] }); void client.invalidateQueries({ queryKey: ['analytics'] }); setRenaming(null); setRenameValue(''); setToast({ type: 'success', message: 'Corridor nomi yangilandi' }) },
     onError: (error) => setToast({ type: 'error', message: error instanceof ApiError ? error.message : 'Nomni saqlashda xato' }),
   })
   const rebuildAll = useMutation({
     mutationFn: async () => {
       const ids = (corridors.data?.items || []).filter((corridor) => corridor.is_active).map((corridor) => corridor.id)
-      let updated = 0; const failed: RebuildResult['failed'] = []
       setRebuildProgress({ done: 0, total: ids.length })
-      for (let index = 0; index < ids.length; index += 5) {
-        const batch = ids.slice(index, index + 5)
-        const result = await api<RebuildResult>('/corridors/rebuild-road-geometries', { method: 'POST', body: JSON.stringify({ corridor_ids: batch, routing_profile: 'driving' }) })
-        updated += result.updated.length; failed.push(...result.failed); setRebuildProgress({ done: Math.min(index + batch.length, ids.length), total: ids.length })
-      }
-      return { updated, failed, total: ids.length }
+      return api<RebuildJob>('/corridors/rebuild-road-geometries', { method: 'POST', body: JSON.stringify({ corridor_ids: ids, routing_profile: 'driving' }) })
     },
-    onSuccess: (result) => { void client.invalidateQueries({ queryKey: ['admin-corridors'] }); setRebuildProgress(null); setToast({ type: result.failed.length ? 'error' : 'success', message: `${result.updated}/${result.total} ta corridor avtomobil yo'li bo'yicha yangilandi${result.failed.length ? `; ${result.failed.length} ta tekshiruvda` : ''}` }) },
+    onSuccess: (result) => { setRebuildProgress(null); setToast({ type: 'success', message: `${result.total} ta corridor fon vazifasiga yuborildi. Progress Operatsiyalar sahifasida ko'rinadi.` }) },
     onError: (error) => { setRebuildProgress(null); setToast({ type: 'error', message: error instanceof ApiError ? error.message : 'Corridorlarni yangilashda xato' }) },
   })
 

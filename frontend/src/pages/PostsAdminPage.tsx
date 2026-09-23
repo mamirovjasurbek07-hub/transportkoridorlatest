@@ -10,7 +10,7 @@ import type { Country, CustomsPost } from '../types'
 import Toast, { ToastState } from '../Toast'
 
 type PostForm = Omit<CustomsPost, 'id'>
-type PostSaveResult = CustomsPost & { corridors_rebuilt?: number; corridors_review?: number }
+type PostSaveResult = CustomsPost & { route_job_id?: string; corridors_review?: number }
 const emptyForm: PostForm = { post_code: '', post_name: '', post_type: 'CHBP', post_category: 'UNASSIGNED', region: '', neighbor_country_code: 'KZ', latitude: undefined, longitude: undefined, location_verified: false, allow_passenger_vehicles: true, allow_cargo_vehicles: true, is_active: true }
 const POST_CATEGORIES: Array<{ value: PostForm['post_category']; label: string }> = [
   { value: 'UNASSIGNED', label: 'Toifa belgilanmagan' },
@@ -39,8 +39,8 @@ export default function PostsAdminPage() {
   const [toast, setToast] = useState<ToastState | null>(null)
   const query = useQuery({ queryKey: ['admin-posts', search, type, category], queryFn: () => { const q = new URLSearchParams({ active_only: 'false', page_size: '500' }); if (search) q.set('search', search); if (type) q.set('post_type', type); if (category) q.set('post_category', category); return api<{ items: CustomsPost[]; total: number }>(`/posts?${q}`) } })
   const countries = useQuery({ queryKey: ['countries'], queryFn: () => api<Country[]>('/countries') })
-  const save = useMutation({ mutationFn: () => editing ? api<PostSaveResult>(`/posts/${editing.id}`, { method: 'PATCH', body: JSON.stringify(form) }) : api<PostSaveResult>('/posts', { method: 'POST', body: JSON.stringify(form) }), onSuccess: (result) => { void client.invalidateQueries({ queryKey: ['admin-posts'] }); void client.invalidateQueries({ queryKey: ['posts-public'] }); void client.invalidateQueries({ queryKey: ['analytics'] }); void client.invalidateQueries({ queryKey: ['corridors-public'] }); setOpen(false); setEditing(null); setForm(emptyForm); setCoordinateText(''); const routeNote = result.corridors_rebuilt || result.corridors_review ? ` · ${result.corridors_rebuilt || 0} yo'lak yangilandi${result.corridors_review ? `, ${result.corridors_review} ta review` : ''}` : ''; setToast({ type: 'success', message: `Post muvaffaqiyatli saqlandi${routeNote}` }) }, onError: (e) => setToast({ type: 'error', message: e instanceof ApiError ? e.message : 'Saqlashda xato' }) })
-  const remove = useMutation({ mutationFn: (id: string) => api(`/posts/${id}`, { method: 'DELETE' }), onSuccess: () => { void client.invalidateQueries({ queryKey: ['admin-posts'] }); setToast({ type: 'success', message: 'Post nofaol qilindi' }) } })
+  const save = useMutation({ mutationFn: () => editing ? api<PostSaveResult>(`/posts/${editing.id}`, { method: 'PATCH', body: JSON.stringify(form) }) : api<PostSaveResult>('/posts', { method: 'POST', body: JSON.stringify(form) }), onSuccess: (result) => { void client.invalidateQueries({ queryKey: ['admin-posts'] }); void client.invalidateQueries({ queryKey: ['public-catalog'] }); void client.invalidateQueries({ queryKey: ['analytics'] }); setOpen(false); setEditing(null); setForm(emptyForm); setCoordinateText(''); const routeNote = result.route_job_id ? ` · ${result.corridors_review || 0} ta yo'lak fon vazifasida yangilanadi` : ''; setToast({ type: 'success', message: `Post muvaffaqiyatli saqlandi${routeNote}` }) }, onError: (e) => setToast({ type: 'error', message: e instanceof ApiError ? e.message : 'Saqlashda xato' }) })
+  const remove = useMutation({ mutationFn: (id: string) => api(`/posts/${id}`, { method: 'DELETE' }), onSuccess: () => { void client.invalidateQueries({ queryKey: ['admin-posts'] }); void client.invalidateQueries({ queryKey: ['public-catalog'] }); setToast({ type: 'success', message: 'Post nofaol qilindi' }) } })
   useEffect(() => { if (!open) setEditing(null) }, [open])
   useEffect(() => {
     if (!open) return

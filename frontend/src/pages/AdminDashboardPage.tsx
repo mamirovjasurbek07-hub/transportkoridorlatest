@@ -5,11 +5,11 @@ import { Link } from 'react-router-dom'
 import { api } from '../api'
 import AdminLayout from '../AdminLayout'
 
-interface Dashboard { total_posts: number; located_posts: number; unlocated_posts: number; active_corridors: number; review_corridors: number; declarations: number }
+interface Dashboard { total_posts: number; located_posts: number; unlocated_posts: number; active_corridors: number; review_corridors: number; declarations: number; health?: { status: string; database: string } }
 type Metric = [string, number | undefined, ComponentType, string]
 
 export default function AdminDashboardPage() {
-  const query = useQuery({ queryKey: ['admin-dashboard'], queryFn: () => api<Dashboard>('/settings/dashboard') })
+  const query = useQuery({ queryKey: ['admin-dashboard'], queryFn: async () => { const [dashboard, health] = await Promise.all([api<Dashboard>('/settings/dashboard'), api<{ status: string; database: string }>('/health')]); return { ...dashboard, health } } })
   const data = query.data
   const warning = sessionStorage.getItem('password-warning')
   const serviceState = query.isError ? 'Xato' : query.isFetching ? 'Tekshirilmoqda' : 'Faol'
