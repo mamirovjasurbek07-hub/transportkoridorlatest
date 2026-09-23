@@ -98,6 +98,8 @@ Davlat filtri ikki bosqichli ishlaydi: avval boshlanish davlati tanlanadi, so‘
 
 Chegara proxy Git LFS pointer faylini emas, `media.githubusercontent.com` dagi haqiqiy GeoJSON faylini oladi. Tashqi manbalar vaqtincha ishlamasa endpoint 503 bermaydi va xarita Yandex ma’muriy chegarasi bilan ishlashda davom etadi. Corridor create/update commitidan keyin obyekt explicit async so‘rov bilan qayta yuklanadi; bu SQLAlchemy `MissingGreenlet` xatosining oldini oladi.
 
+Public corridor GeoJSON’i PostGIS `ST_SimplifyPreserveTopology` bilan taxminan 30 metr tolerance’da yengillashtiriladi: avtomobil yo‘li shakli saqlanadi, lekin Yandex’ga o‘n minglab ortiqcha vertex yuborilmaydi. Yandex’da corridor tanlash kolleksiyani o‘chirib qayta qurmaydi — mavjud Polyline uslubi yangilanadi. O‘zbekiston chegarasi backenddagi GeoJSON’dan oddiy Yandex `Polyline` sifatida chiziladi; muhitga bog‘liq `admin`, `borders.load()` va `geoQuery` qatlamlari ishlatilmaydi. Barcha kechikkan map callbacklari destroy qilingan xaritaga yozishdan oldin lifecycle holatini tekshiradi.
+
 Admin sahifada:
 
 1. `Bojxona postlari` bo‘limida yangi post yarating. Xaritani bosing yoki `41.310617600000036, 69.21984867557755` formatida koordinatani bitta maydonga kiriting — marker va fokus darhol yangilanadi. CHBP uchun yengil va/yoki yuk transporti ruxsatini belgilang. Mavjud post koordinatasi o‘zgarsa bog‘langan faol yo‘laklar qayta hisoblanadi.
