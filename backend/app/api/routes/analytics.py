@@ -3,6 +3,7 @@ import asyncio
 import io
 import json
 import time
+import uuid
 from datetime import UTC, date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -45,7 +46,7 @@ def declaration_filters(date_from: date, date_to: date, origin: str | None, dest
     return filters
 
 
-async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, origin: str | None, destination: str | None, entry: str | None, exit: str | None, corridor_code: str | None, map_mode: str = "all") -> dict:
+async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, origin: str | None, destination: str | None, entry: str | None, exit: str | None, corridor_code: str | None, corridor_ids: tuple[uuid.UUID, ...] = (), map_mode: str = "all") -> dict:
     validate_dates(date_from, date_to)
     filters = declaration_filters(date_from, date_to, origin, destination, entry, exit)
     selected_corridor = None
@@ -93,11 +94,14 @@ async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, or
     corridor_query = select(Corridor).options(noload(Corridor.waypoints)).where(Corridor.is_active.is_(True))
     if corridor_code:
         corridor_query = corridor_query.where(Corridor.code == corridor_code)
-    if origin:
-        corridor_query = corridor_query.where(Corridor.origin_country_code == origin.upper())
-    if destination:
-        corridor_query = corridor_query.where(Corridor.destination_country_code == destination.upper())
-    corridors = [] if map_mode == "posts" and not corridor_code else (await db.scalars(corridor_query)).all()
+    if corridor_ids:
+        corridor_query = corridor_query.where(Corridor.id.in_(corridor_ids))
+    else:
+        if origin:
+            corridor_query = corridor_query.where(Corridor.origin_country_code == origin.upper())
+        if destination:
+            corridor_query = corridor_query.where(Corridor.destination_country_code == destination.upper())
+    corridors = [] if map_mode == "posts" and not corridor_code and not corridor_ids else (await db.scalars(corridor_query)).all()
     post_rows = (await db.scalars(select(CustomsPost).where(CustomsPost.is_active.is_(True), CustomsPost.latitude.is_not(None)))).all()
     posts_by_code = {post.post_code: post for post in post_rows}
     post_names = {code: post.post_name for code, post in posts_by_code.items()}
@@ -272,8 +276,8 @@ async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, or
     }
 
 
-async def cached_analytics_payload(db: AsyncSession, date_from: date, date_to: date, origin: str | None, destination: str | None, entry: str | None, exit: str | None, corridor: str | None, map_mode: str) -> dict:
-    key = (date_from, date_to, origin, destination, entry, exit, corridor, map_mode)
+async def cached_analytics_payload(db: AsyncSession, date_from: date, date_to: date, origin: str | None, destination: str | None, entry: str | None, exit: str | None, corridor: str | None, corridor_ids: tuple[uuid.UUID, ...], map_mode: str) -> dict:
+    key = (date_from, date_to, origin, destination, entry, exit, corridor, tuple(str(item) for item in corridor_ids), map_mode)
     cached = _analytics_cache.get(key)
     now = time.monotonic()
     if cached and now - cached[0] < ANALYTICS_CACHE_SECONDS:
@@ -283,7 +287,7 @@ async def cached_analytics_payload(db: AsyncSession, date_from: date, date_to: d
         now = time.monotonic()
         if cached and now - cached[0] < ANALYTICS_CACHE_SECONDS:
             return cached[1]
-        value = await analytics_payload(db, date_from, date_to, origin, destination, entry, exit, corridor, map_mode)
+        value = await analytics_payload(db, date_from, date_to, origin, destination, entry, exit, corridor, corridor_ids, map_mode)
         _analytics_cache[key] = (now, value)
         if len(_analytics_cache) > 256:
             expired = sorted(_analytics_cache.items(), key=lambda item: item[1][0])[:64]
@@ -297,10 +301,21 @@ async def analytics(
     response: Response,
     date_from: date = Query(default=LATEST_OFFICIAL_REPORT_FROM),
     date_to: date = Query(default=LATEST_OFFICIAL_REPORT_TO), origin: str | None = None, destination: str | None = None,
-    entry: str | None = None, exit: str | None = None, corridor: str | None = None, map_mode: str = Query("posts", pattern="^(posts|top5|all)$"), db: AsyncSession = Depends(get_db),
+    entry: str | None = None, exit: str | None = None, corridor: str | None = None,
+    corridor_ids: str | None = Query(default=None, max_length=4000),
+    map_mode: str = Query("posts", pattern="^(posts|top5|all)$"), db: AsyncSession = Depends(get_db),
 ) -> dict:
+    selected_ids: tuple[uuid.UUID, ...] = ()
+    if corridor_ids:
+        raw_ids = [item.strip() for item in corridor_ids.split(",") if item.strip()]
+        if len(raw_ids) > 100:
+            raise HTTPException(status_code=422, detail="Bir vaqtda ko'pi bilan 100 ta yo'lak tanlash mumkin")
+        try:
+            selected_ids = tuple(sorted({uuid.UUID(item) for item in raw_ids}, key=str))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="Yo'lak identifikatori noto'g'ri") from exc
     response.headers["Cache-Control"] = "public, max-age=45, stale-while-revalidate=90"
-    return await cached_analytics_payload(db, date_from, date_to, origin, destination, entry, exit, corridor, map_mode)
+    return await cached_analytics_payload(db, date_from, date_to, origin, destination, entry, exit, corridor, selected_ids, map_mode)
 
 
 @router.get("/compare")
@@ -312,8 +327,8 @@ async def compare_periods(
 ) -> dict:
     validate_dates(a_from, a_to)
     validate_dates(b_from, b_to)
-    first = await cached_analytics_payload(db, a_from, a_to, origin, destination, entry, exit, None, "posts")
-    second = await cached_analytics_payload(db, b_from, b_to, origin, destination, entry, exit, None, "posts")
+    first = await cached_analytics_payload(db, a_from, a_to, origin, destination, entry, exit, None, (), "posts")
+    second = await cached_analytics_payload(db, b_from, b_to, origin, destination, entry, exit, None, (), "posts")
     first_total = first["kpis"]["total_declarations"]
     second_total = second["kpis"]["total_declarations"]
     change = round((second_total - first_total) * 100 / first_total, 1) if first_total else (100.0 if second_total else 0.0)
@@ -341,4 +356,4 @@ async def export_csv(date_from: date, date_to: date, origin: str | None = None, 
 
 @router.get("/corridors.geojson")
 async def export_geojson(date_from: date, date_to: date, db: AsyncSession = Depends(get_db)) -> dict:
-    return (await cached_analytics_payload(db, date_from, date_to, None, None, None, None, None, "all"))["corridors"]
+    return (await cached_analytics_payload(db, date_from, date_to, None, None, None, None, None, (), "all"))["corridors"]

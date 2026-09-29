@@ -9,7 +9,6 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPExcepti
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import Response
 from geoalchemy2.functions import ST_MakePoint, ST_SetSRID
-from openpyxl import load_workbook
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -48,6 +47,13 @@ async def csv_rows(file: UploadFile) -> list[dict[str, str]]:
     if len(raw) > MAX_IMPORT_BYTES:
         raise HTTPException(status_code=413, detail="CSV fayl 5 MB dan katta bo'lmasin")
     if (file.filename or "").lower().endswith(".xlsx"):
+        try:
+            from openpyxl import load_workbook
+        except ImportError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="Excel import moduli o'rnatilmagan; server requirements.txt faylini qayta build qiling",
+            ) from exc
         try:
             sheet = load_workbook(io.BytesIO(raw), read_only=True, data_only=True).active
             iterator = sheet.iter_rows(values_only=True)
