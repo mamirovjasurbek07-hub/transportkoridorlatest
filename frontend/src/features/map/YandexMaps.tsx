@@ -296,7 +296,7 @@ export function YandexRouteBuilderMap({ apiKey, waypoints, geometry, posts = [],
     }
     waypoints.forEach((point, index) => {
       const fixed = Boolean(point.post_code)
-      const preset = point.waypoint_type === 'ENTRY_POST' || point.waypoint_type === 'EXIT_POST' ? 'islands#redCircleIcon' : point.waypoint_type.includes('GATEWAY') ? 'islands#darkBlueCircleIcon' : 'islands#blueCircleIcon'
+      const preset = point.waypoint_type === 'ENTRY_POST' || point.waypoint_type === 'EXIT_POST' ? 'islands#redCircleIcon' : point.waypoint_type === 'SEA' ? 'islands#lightBlueCircleIcon' : point.waypoint_type.includes('GATEWAY') ? 'islands#darkBlueCircleIcon' : 'islands#blueCircleIcon'
       const marker = new ymaps.Placemark([point.latitude, point.longitude], { iconContent: String(index + 1), hintContent: point.label || point.waypoint_type }, { preset, draggable: !fixed, zIndex: 700 })
       marker.events.add('dragend', () => { const [lat, lng] = marker.geometry.getCoordinates(); onMoveRef.current(index, lat, lng) }); objects.add(marker)
     })
