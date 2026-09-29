@@ -30,7 +30,7 @@ export interface CustomsPost {
 
 export interface Waypoint {
   sequence_no: number
-  waypoint_type: 'ORIGIN_GATEWAY' | 'ENTRY_POST' | 'VIA' | 'EXIT_POST' | 'DESTINATION_GATEWAY'
+  waypoint_type: 'ORIGIN_GATEWAY' | 'ENTRY_POST' | 'VIA' | 'SEA' | 'EXIT_POST' | 'DESTINATION_GATEWAY'
   latitude: number
   longitude: number
   post_code?: string
