@@ -113,7 +113,7 @@ class PostRead(PostBase):
     updated_at: datetime
 
 
-WaypointType = Literal["ORIGIN_GATEWAY", "ENTRY_POST", "VIA", "EXIT_POST", "DESTINATION_GATEWAY"]
+WaypointType = Literal["ORIGIN_GATEWAY", "ENTRY_POST", "VIA", "SEA", "EXIT_POST", "DESTINATION_GATEWAY"]
 
 
 class WaypointInput(BaseModel):
@@ -124,6 +124,17 @@ class WaypointInput(BaseModel):
     post_code: str | None = None
     gateway_id: str | None = None
     label: str | None = None
+
+
+def validate_sea_waypoint_pairs(waypoints: list[WaypointInput]) -> None:
+    """Every sea point must belong to a consecutive sea segment."""
+    for index, waypoint in enumerate(waypoints):
+        if waypoint.waypoint_type != "SEA":
+            continue
+        previous_is_sea = index > 0 and waypoints[index - 1].waypoint_type == "SEA"
+        next_is_sea = index + 1 < len(waypoints) and waypoints[index + 1].waypoint_type == "SEA"
+        if not previous_is_sea and not next_is_sea:
+            raise ValueError("Dengiz yo'li uchun ketma-ket kamida 2 ta dengiz nuqtasi kerak")
 
 
 class CorridorBase(BaseModel):
@@ -153,6 +164,7 @@ class CorridorBase(BaseModel):
         exit = next(w for w in self.waypoints if w.waypoint_type == "EXIT_POST")
         if entry.post_code != self.entry_post_code or exit.post_code != self.exit_post_code:
             raise ValueError("Waypoint post kodlari tanlangan kirish/chiqish postlariga mos emas")
+        validate_sea_waypoint_pairs(self.waypoints)
         return self
 
 
@@ -174,11 +186,22 @@ class CorridorUpdate(BaseModel):
     waypoints: list[WaypointInput] | None = Field(default=None, min_length=4, max_length=50)
     rebuild_route: bool = False
 
+    @model_validator(mode="after")
+    def validate_sea_waypoints(self) -> "CorridorUpdate":
+        if self.waypoints is not None:
+            validate_sea_waypoint_pairs(self.waypoints)
+        return self
+
 
 class RoutePreviewRequest(BaseModel):
     waypoints: list[WaypointInput] = Field(min_length=2)
     force: bool = False
     routing_profile: Literal["driving", "truck"] = "driving"
+
+    @model_validator(mode="after")
+    def validate_sea_waypoints(self) -> "RoutePreviewRequest":
+        validate_sea_waypoint_pairs(self.waypoints)
+        return self
 
 
 class CorridorRebuildRequest(BaseModel):

@@ -628,7 +628,14 @@ async def rebuild_pending_seed_routes(session_factory) -> None:
             if corridor is None or corridor.geometry_source != PENDING_SEED_GEOMETRY_SOURCE:
                 continue
             ordered = sorted(corridor.waypoints, key=lambda point: point.sequence_no)
-            waypoint_data = [{"latitude": point.latitude, "longitude": point.longitude} for point in ordered]
+            waypoint_data = [
+                {
+                    "latitude": point.latitude,
+                    "longitude": point.longitude,
+                    "waypoint_type": point.waypoint_type,
+                }
+                for point in ordered
+            ]
             try:
                 result = await RoutingService(db).route(waypoint_data, profile=corridor.routing_profile)
                 if result.available and result.geometry:

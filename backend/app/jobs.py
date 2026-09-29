@@ -94,7 +94,7 @@ async def _run_route_rebuild(job_id: uuid.UUID) -> None:
                         corridor.status = "REVIEW"
                         failed.append({"id": corridor_id, "code": corridor.code, "message": "Kamida 2 ta waypoint kerak"})
                     else:
-                        waypoint_data = [{"latitude": point.latitude, "longitude": point.longitude} for point in ordered]
+                        waypoint_data = [{"latitude": point.latitude, "longitude": point.longitude, "waypoint_type": point.waypoint_type} for point in ordered]
                         result = await RoutingService(db).route(waypoint_data, force=True, profile=profile)
                         apply_route_result(corridor, result)
                         corridor.routing_profile = profile
