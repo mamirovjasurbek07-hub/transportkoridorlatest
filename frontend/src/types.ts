@@ -61,7 +61,7 @@ export interface Corridor {
 }
 
 export interface AnalyticsData {
-  meta: { date_from: string; date_to: string; refreshed_at: string; unavailable_count: number }
+  meta: { date_from: string; date_to: string; refreshed_at: string; unavailable_count: number; database_status?: 'connected' | 'stale-cache' | 'unavailable' }
   kpis: {
     total_declarations: number
     active_corridors: number
