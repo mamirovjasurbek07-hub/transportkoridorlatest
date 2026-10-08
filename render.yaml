@@ -6,7 +6,7 @@ services:
     region: singapore
     dockerfilePath: ./backend/Dockerfile
     dockerContext: .
-    healthCheckPath: /api/health
+    healthCheckPath: /api/live
     autoDeployTrigger: commit
     envVars:
       - key: APP_ENV
@@ -15,6 +15,12 @@ services:
         sync: false
       - key: DATABASE_SSL
         value: "true"
+      - key: DATABASE_KEEPALIVE_ENABLED
+        value: "true"
+      - key: DATABASE_KEEPALIVE_SECONDS
+        value: "21600"
+      - key: DATABASE_STARTUP_RETRIES
+        value: "12"
       - key: SECRET_KEY
         generateValue: true
       - key: ADMIN_INITIAL_EMAIL

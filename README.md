@@ -57,6 +57,23 @@ start buyrug'ida avtomatik ishlaydi; demo ma'lumot va routing qayta qurilishi es
 server ishga tushishini to'smaydi. Zarur bo'lsa to'liq seed alohida ravishda
 `python -m app.seed_cli` buyrug'i bilan ishga tushiriladi.
 
+### Supabase ulanishi va pause holati
+
+Render uchun `DATABASE_URL` qiymatini Supabase Dashboard → `Connect` →
+`Session pooler` bo'limidan to'liq nusxalang. Pooler hostini taxminan yozmang:
+klaster indeksi (`aws-0`, `aws-1` va hokazo) loyiha uchun Dashboard bergan qiymat
+bo'lishi shart. Session pooler URL'i `5432` portdan va
+`postgres.PROJECT_REF` foydalanuvchisidan foydalanadi. Parolda `#`, `?`, `&` yoki
+bo'sh joy bo'lsa, ular URL-encode qilinadi.
+
+Free Supabase loyihasi kam faollik sabab pause bo'lishi mumkin. Production server
+har 6 soatda yengil `SELECT 1` yuboradi (`DATABASE_KEEPALIVE_SECONDS=21600`). Baza
+vaqtincha javob bermasa ulanish pooli tozalanadi va har 60 soniyada tiklanish
+tekshiriladi. Render liveness tekshiruvi `/api/live`, bazaning alohida holati esa
+`/api/health` orqali ko'riladi. Yangi deployda Alembic vaqtinchalik uzilish uchun
+12 marta qayta urinadi. Doimiy pause bo'lmasligining kafolatli yo'li Supabase Pro
+rejasidir.
+
 ## Lokal dasturlash
 
 Backend uchun Python 3.12+ va PostGIS ishlayotgan PostgreSQL kerak. Ushbu loyiha tayyorlanayotganda kompyuterdagi Python ishga tushirilmadi.
