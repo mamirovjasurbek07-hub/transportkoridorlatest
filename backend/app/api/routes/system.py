@@ -1,12 +1,15 @@
 import time
 import csv
 import io
-from datetime import datetime
+from datetime import date, datetime
 
+import asyncpg
 import httpx
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, or_, select, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import noload
 
@@ -21,7 +24,23 @@ from app.config import settings
 from app.query_utils import contains_pattern
 
 router = APIRouter(tags=["system"])
+logger = structlog.get_logger()
 _border_cache: tuple[float, dict] | None = None
+_public_catalog_cache: dict | None = None
+_report_period_cache: dict | None = None
+
+
+def degraded_response(response: Response, source: str) -> None:
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Data-Source"] = source
+    response.headers["Warning"] = '110 - "Database unavailable; degraded response"'
+
+
+@router.get("/live", tags=["health"])
+async def liveness() -> dict:
+    """Process liveness check; intentionally does not depend on PostgreSQL."""
+    return {"status": "ok", "service": "running"}
+
 
 @router.get("/health", tags=["health"])
 async def health(db: AsyncSession = Depends(get_db)) -> dict:
@@ -40,8 +59,12 @@ async def readiness(db: AsyncSession = Depends(get_db)) -> dict:
 async def map_config(db: AsyncSession = Depends(get_db)) -> dict:
     yandex_ready = settings.map_provider == "yandex" and bool(settings.yandex_maps_api_key.strip())
     routing_provider = "yandex" if settings.yandex_router_enabled and settings.routing_provider.lower() == "yandex" and settings.yandex_router_api_key.strip() else "osrm"
-    ui = await db.get(AppSetting, "ui")
-    runtime = ui.value if ui and isinstance(ui.value, dict) else {}
+    try:
+        ui = await db.get(AppSetting, "ui")
+        runtime = ui.value if ui and isinstance(ui.value, dict) else {}
+    except (SQLAlchemyError, asyncpg.PostgresError) as exc:
+        runtime = {}
+        await logger.awarning("map_config_database_fallback", error=type(exc).__name__)
     requested_routing = str(runtime.get("routing_provider", routing_provider))
     if requested_routing == "yandex" and not settings.yandex_router_enabled:
         requested_routing = "osrm"
@@ -122,16 +145,29 @@ async def countries(response: Response, db: AsyncSession = Depends(get_db)) -> l
 
 @router.get("/public/catalog", tags=["catalog"])
 async def public_catalog(response: Response, db: AsyncSession = Depends(get_db)) -> dict:
+    global _public_catalog_cache
     response.headers["Cache-Control"] = "public, max-age=300, stale-while-revalidate=600"
-    posts = (await db.scalars(select(CustomsPost).where(CustomsPost.is_active.is_(True), CustomsPost.deleted_at.is_(None)).order_by(CustomsPost.post_code))).all()
-    corridors = (await db.scalars(select(Corridor).options(noload(Corridor.waypoints)).where(Corridor.is_active.is_(True)).order_by(Corridor.priority, Corridor.name))).all()
+    try:
+        posts = (await db.scalars(select(CustomsPost).where(CustomsPost.is_active.is_(True), CustomsPost.deleted_at.is_(None)).order_by(CustomsPost.post_code))).all()
+        corridors = (await db.scalars(select(Corridor).options(noload(Corridor.waypoints)).where(Corridor.is_active.is_(True)).order_by(Corridor.priority, Corridor.name))).all()
+    except (SQLAlchemyError, asyncpg.PostgresError) as exc:
+        source = "stale-cache" if _public_catalog_cache else "empty-fallback"
+        degraded_response(response, source)
+        await logger.awarning("public_catalog_database_fallback", source=source, error=type(exc).__name__)
+        return _public_catalog_cache or {
+            "countries": [{**country, "has_origin_route": False, "has_destination_route": False} for country in COUNTRIES],
+            "posts": [],
+            "corridors": [],
+        }
     origins = {row.origin_country_code for row in corridors if row.origin_country_code}
     destinations = {row.destination_country_code for row in corridors if row.destination_country_code}
-    return {
+    payload = {
         "countries": [{**country, "has_origin_route": country["alpha2"] in origins, "has_destination_route": country["alpha2"] in destinations} for country in COUNTRIES],
         "posts": [{"id": str(row.id), "post_code": row.post_code, "post_name": row.post_name, "post_type": row.post_type, "post_category": row.post_category, "region": row.region, "neighbor_country_code": row.neighbor_country_code, "latitude": row.latitude, "longitude": row.longitude, "location_verified": row.location_verified, "allow_passenger_vehicles": row.allow_passenger_vehicles, "allow_cargo_vehicles": row.allow_cargo_vehicles, "is_active": row.is_active} for row in posts],
         "corridors": [{"id": str(row.id), "code": row.code, "name": row.name, "origin_country_code": row.origin_country_code, "destination_country_code": row.destination_country_code, "entry_post_code": row.entry_post_code, "exit_post_code": row.exit_post_code, "status": row.status, "color": row.color, "routing_provider": row.routing_provider, "routing_profile": row.routing_profile, "geometry_source": row.geometry_source, "distance_meters": row.distance_meters, "duration_seconds": row.duration_seconds, "route_needs_review": row.route_needs_review, "priority": row.priority, "is_active": row.is_active, "waypoints": []} for row in corridors],
     }
+    _public_catalog_cache = payload
+    return payload
 
 
 @router.get("/declarations/summary", tags=["declarations"])
@@ -164,12 +200,26 @@ async def dashboard(db: AsyncSession = Depends(get_db), _: User = Depends(curren
 
 @router.get("/meta/report-period", tags=["analytics"])
 async def report_period(response: Response, db: AsyncSession = Depends(get_db)) -> dict:
+    global _report_period_cache
     response.headers["Cache-Control"] = "public, max-age=300, stale-while-revalidate=600"
-    metric_from, metric_to = (await db.execute(select(func.min(PostDailyMetric.metric_date), func.max(PostDailyMetric.metric_date)))).one()
-    declaration_from, declaration_to = (await db.execute(select(func.min(TransitDeclaration.declaration_date), func.max(TransitDeclaration.declaration_date)))).one()
+    try:
+        metric_from, metric_to = (await db.execute(select(func.min(PostDailyMetric.metric_date), func.max(PostDailyMetric.metric_date)))).one()
+        declaration_from, declaration_to = (await db.execute(select(func.min(TransitDeclaration.declaration_date), func.max(TransitDeclaration.declaration_date)))).one()
+    except (SQLAlchemyError, asyncpg.PostgresError) as exc:
+        source = "stale-cache" if _report_period_cache else "date-fallback"
+        degraded_response(response, source)
+        await logger.awarning("report_period_database_fallback", source=source, error=type(exc).__name__)
+        return _report_period_cache or {
+            "date_from": date(date.today().year, 1, 1),
+            "date_to": date.today(),
+            "latest_metric_date": None,
+            "latest_declaration_date": None,
+        }
     latest = metric_to or declaration_to
     earliest = metric_from or declaration_from
-    return {"date_from": earliest, "date_to": latest, "latest_metric_date": metric_to, "latest_declaration_date": declaration_to}
+    payload = {"date_from": earliest, "date_to": latest, "latest_metric_date": metric_to, "latest_declaration_date": declaration_to}
+    _report_period_cache = payload
+    return payload
 
 
 @router.get("/monitoring", tags=["monitoring"])

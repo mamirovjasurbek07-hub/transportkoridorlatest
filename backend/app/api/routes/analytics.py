@@ -6,22 +6,53 @@ import time
 import uuid
 from datetime import UTC, date, datetime, timedelta
 
+import asyncpg
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
 from geoalchemy2.functions import ST_AsGeoJSON
 from sqlalchemy import extract, func, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import noload
 
-from app.database import get_db
+from app.database import get_db, reset_database_pool
 from app.models import Corridor, CustomsPost, PostDailyMetric, TransitDeclaration
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
+logger = structlog.get_logger()
 LATEST_OFFICIAL_REPORT_FROM = date(2026, 1, 1)
 LATEST_OFFICIAL_REPORT_TO = date(2026, 7, 31)
 _analytics_cache: dict[tuple, tuple[float, dict]] = {}
 _analytics_cache_lock = asyncio.Lock()
 ANALYTICS_CACHE_SECONDS = 45
+
+
+def empty_analytics_payload(date_from: date, date_to: date) -> dict:
+    return {
+        "meta": {
+            "date_from": date_from,
+            "date_to": date_to,
+            "refreshed_at": datetime.now(UTC).isoformat(),
+            "unavailable_count": 0,
+            "database_status": "unavailable",
+        },
+        "kpis": {
+            "total_declarations": 0,
+            "active_corridors": 0,
+            "entry_posts": 0,
+            "exit_posts": 0,
+            "top_corridor": "—",
+            "avg_transit_minutes": 0,
+            "change_percent": 0,
+        },
+        "corridors": {"type": "FeatureCollection", "features": []},
+        "posts": {"type": "FeatureCollection", "features": []},
+        "unavailable_routes": [],
+        "top_pairs": [],
+        "country_share": [],
+        "trend": [],
+    }
 
 
 def validate_dates(date_from: date, date_to: date) -> None:
@@ -264,7 +295,7 @@ async def analytics_payload(db: AsyncSession, date_from: date, date_to: date, or
     top_pairs = top_rows
     top_corridor = max(features, key=lambda f: f["properties"]["declaration_count"], default=None)
     return {
-        "meta": {"date_from": date_from, "date_to": date_to, "refreshed_at": datetime.now(UTC).isoformat(), "unavailable_count": len(unavailable)},
+        "meta": {"date_from": date_from, "date_to": date_to, "refreshed_at": datetime.now(UTC).isoformat(), "unavailable_count": len(unavailable), "database_status": "connected"},
         "kpis": {"total_declarations": total, "active_corridors": available_corridor_count, "entry_posts": len(entry_counts), "exit_posts": len(exit_counts),
             "top_corridor": top_corridor["properties"]["name"] if top_corridor else "—", "avg_transit_minutes": round(sum((r.avg_seconds or 0) * r.count for r in grouped) / total / 60) if total else 0,
             "change_percent": change},
@@ -287,7 +318,13 @@ async def cached_analytics_payload(db: AsyncSession, date_from: date, date_to: d
         now = time.monotonic()
         if cached and now - cached[0] < ANALYTICS_CACHE_SECONDS:
             return cached[1]
-        value = await analytics_payload(db, date_from, date_to, origin, destination, entry, exit, corridor, corridor_ids, map_mode)
+        try:
+            value = await analytics_payload(db, date_from, date_to, origin, destination, entry, exit, corridor, corridor_ids, map_mode)
+        except (SQLAlchemyError, asyncpg.PostgresError):
+            if cached:
+                stale_value = {**cached[1], "meta": {**cached[1]["meta"], "database_status": "stale-cache"}}
+                return stale_value
+            raise
         _analytics_cache[key] = (now, value)
         if len(_analytics_cache) > 256:
             expired = sorted(_analytics_cache.items(), key=lambda item: item[1][0])[:64]
@@ -315,7 +352,22 @@ async def analytics(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail="Yo'lak identifikatori noto'g'ri") from exc
     response.headers["Cache-Control"] = "public, max-age=45, stale-while-revalidate=90"
-    return await cached_analytics_payload(db, date_from, date_to, origin, destination, entry, exit, corridor, selected_ids, map_mode)
+    try:
+        result = await cached_analytics_payload(db, date_from, date_to, origin, destination, entry, exit, corridor, selected_ids, map_mode)
+    except (SQLAlchemyError, asyncpg.PostgresError) as exc:
+        await reset_database_pool()
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Data-Source"] = "empty-fallback"
+        response.headers["Warning"] = '110 - "Database unavailable; degraded response"'
+        await logger.awarning("analytics_database_fallback", source="empty-fallback", error=type(exc).__name__)
+        return empty_analytics_payload(date_from, date_to)
+    if result.get("meta", {}).get("database_status") == "stale-cache":
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Data-Source"] = "stale-cache"
+        response.headers["Warning"] = '110 - "Database unavailable; stale response"'
+        await reset_database_pool()
+        await logger.awarning("analytics_database_fallback", source="stale-cache")
+    return result
 
 
 @router.get("/compare")
