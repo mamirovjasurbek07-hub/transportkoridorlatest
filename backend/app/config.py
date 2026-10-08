@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     app_env: Literal["development", "test", "production"] = "development"
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/transit_map"
     database_ssl: bool = False
+    database_keepalive_enabled: bool = True
+    database_keepalive_seconds: int = 21_600
     secret_key: str = "development-only-secret-change-before-production"
     admin_initial_email: str = "admin@example.local"
     admin_initial_password: str = "CHANGE_ME_NOW"
@@ -61,6 +63,13 @@ class Settings(BaseSettings):
         if "@" not in normalized or normalized.startswith("@") or normalized.endswith("@"):
             raise ValueError("ADMIN_INITIAL_EMAIL email ko'rinishida bo'lishi kerak")
         return normalized
+
+    @field_validator("database_keepalive_seconds")
+    @classmethod
+    def valid_database_keepalive_seconds(cls, value: int) -> int:
+        if not 900 <= value <= 86_400:
+            raise ValueError("DATABASE_KEEPALIVE_SECONDS 900–86400 oralig'ida bo'lishi kerak")
+        return value
 
     @field_validator("admin_initial_password")
     @classmethod

@@ -22,7 +22,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.api.router import api_router
 from app.audit import audit_record, client_ip
 from app.config import settings
-from app.database import SessionLocal
+from app.database import SessionLocal, ping_database, reset_database_pool
 from app.models import AuditLog
 from app.jobs import run_route_rebuild, unfinished_route_job_ids
 from app.monitoring import record_request
@@ -33,18 +33,71 @@ structlog.configure(processors=[structlog.processors.TimeStamper(fmt="iso"), str
 logger = structlog.get_logger()
 
 
+async def initialize_database(max_attempts: int | None = None) -> bool:
+    """Initialize database-backed state without making the web server unavailable forever."""
+    attempts = max_attempts or (3 if settings.app_env == "production" else 1)
+    for attempt in range(1, attempts + 1):
+        try:
+            async with SessionLocal() as db:
+                if settings.seed_on_startup:
+                    await seed_all(db)
+                else:
+                    await ensure_initial_admin(db)
+            return True
+        except Exception as exc:
+            await reset_database_pool()
+            await logger.awarning(
+                "database_initialization_retry",
+                attempt=attempt,
+                max_attempts=attempts,
+                error=type(exc).__name__,
+                reason=database_error_reason(exc),
+            )
+            if attempt < attempts:
+                await asyncio.sleep(attempt * 2)
+    if settings.app_env != "production":
+        raise RuntimeError("Ma'lumotlar bazasini ishga tushirib bo'lmadi")
+    return False
+
+
+async def database_keepalive_loop(needs_initialization: bool) -> None:
+    """Keep low-traffic databases active and recover cleanly after a short outage."""
+    while True:
+        delay = settings.database_keepalive_seconds
+        try:
+            if needs_initialization:
+                needs_initialization = not await initialize_database(max_attempts=1)
+                if needs_initialization:
+                    delay = 60
+            else:
+                await ping_database()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            needs_initialization = True
+            delay = 60
+            await reset_database_pool()
+            await logger.awarning(
+                "database_keepalive_failed",
+                error=type(exc).__name__,
+                reason=database_error_reason(exc),
+            )
+        await asyncio.sleep(delay)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    async with SessionLocal() as db:
-        if settings.seed_on_startup:
-            await seed_all(db)
-        else:
-            await ensure_initial_admin(db)
-    recovered_jobs = await unfinished_route_job_ids()
+    database_initialized = await initialize_database()
+    recovered_jobs = await unfinished_route_job_ids() if database_initialized else []
     recovery_tasks = [asyncio.create_task(run_route_rebuild(job_id)) for job_id in recovered_jobs]
+    keepalive_task = asyncio.create_task(database_keepalive_loop(not database_initialized)) if settings.database_keepalive_enabled else None
     try:
         yield
     finally:
+        if keepalive_task and not keepalive_task.done():
+            keepalive_task.cancel()
+        if keepalive_task:
+            await asyncio.gather(keepalive_task, return_exceptions=True)
         for task in recovery_tasks:
             if not task.done():
                 task.cancel()
@@ -121,6 +174,7 @@ async def database_unavailable(request: Request, exc: Exception):
         error=type(exc).__name__,
         reason=database_error_reason(exc),
     )
+    await reset_database_pool()
     return ORJSONResponse(
         status_code=503,
         headers={"Retry-After": "10", "X-Request-ID": request_id},
@@ -183,6 +237,7 @@ async def record_page_visit(action: str, path: str, ip_address: str | None, user
             )
             await db.commit()
     except Exception as exc:
+        await reset_database_pool()
         await logger.awarning("page_visit_log_failed", path=path, error=type(exc).__name__)
 
 

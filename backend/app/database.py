@@ -1,5 +1,6 @@
 from collections.abc import AsyncIterator
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -24,9 +25,21 @@ engine = create_async_engine(
     max_overflow=2,
     pool_timeout=10,
     pool_recycle=300,
+    pool_use_lifo=True,
     connect_args=connect_args,
 )
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+
+
+async def ping_database() -> None:
+    """Open a fresh pooled connection and verify that PostgreSQL answers."""
+    async with engine.connect() as connection:
+        await connection.execute(text("SELECT 1"))
+
+
+async def reset_database_pool() -> None:
+    """Discard stale connections so the next request reconnects cleanly."""
+    await engine.dispose()
 
 
 async def get_db() -> AsyncIterator[AsyncSession]:
