@@ -1,11 +1,11 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { format } from 'date-fns'
-import { Bookmark, Download, Layers3, LogIn, MapPinned, Radio, RefreshCw, Search, ShieldCheck } from 'lucide-react'
+import { Bookmark, Check, ChevronDown, Download, Layers3, LogIn, MapPinned, Radio, RefreshCw, Search, ShieldCheck, X } from 'lucide-react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { api, ApiError, API_BASE } from '../api'
 import FilterPanel from '../features/filters/FilterPanel'
-import { CorridorDrawer, CorridorPicker, KpiGrid, PostRankingPanel, type RankingPostType, StatsPanel } from '../features/analytics/AnalyticsPanels'
+import { CorridorDrawer, CorridorPicker, KpiGrid, StatsPanel } from '../features/analytics/AnalyticsPanels'
 import TransitMap from '../features/map/TransitMap'
 import type { AnalyticsData, Corridor, Country, CustomsPost, FeatureCollection, Filters } from '../types'
 import { initialDateRange } from '../filters'
@@ -17,10 +17,36 @@ function defaultFilters(params: URLSearchParams): Filters {
   return { date_from: params.get('date_from') || reportPeriod.date_from, date_to: params.get('date_to') || reportPeriod.date_to, origin: params.get('origin') || '', destination: params.get('destination') || '', entry: params.get('entry') || '', exit: params.get('exit') || '', corridor: params.get('corridor') || '' }
 }
 
-function VisibilityMenu({ label, icon, items, selected, onChange }: { label: string; icon: ReactNode; items: Array<{ id: string; label: string; detail?: string }>; selected: string[]; onChange: (ids: string[]) => void }) {
-  const selectedSet = new Set(selected)
-  const toggle = (id: string) => onChange(selectedSet.has(id) ? selected.filter((item) => item !== id) : [...selected, id])
-  return <details className="visibility-menu"><summary className="btn ghost compact">{icon}<span>{label}</span><b>{selected.length}</b></summary><div className="visibility-popover"><div className="visibility-actions"><strong>{label} ko‘rinishi</strong><button onClick={() => onChange(items.map((item) => item.id))}>Barchasi</button><button onClick={() => onChange([])}>Hech biri</button></div><div className="visibility-list">{items.map((item) => <label key={item.id}><input type="checkbox" checked={selectedSet.has(item.id)} onChange={() => toggle(item.id)}/><span><strong>{item.label}</strong>{item.detail && <small>{item.detail}</small>}</span></label>)}</div>{!items.length && <p>Tanlash uchun ma’lumot yo‘q.</p>}</div></details>
+type VisibilityItem = { id: string; label: string; detail?: string }
+
+function VisibilityMenu({ menuId, label, icon, items, selected, isOpen, onToggle, onClose, onChange }: { menuId: string; label: string; icon: ReactNode; items: VisibilityItem[]; selected: string[]; isOpen: boolean; onToggle: () => void; onClose: () => void; onChange: (ids: string[]) => void }) {
+  const rootRef = useRef<HTMLDivElement>(null)
+  const [search, setSearch] = useState('')
+  const [draft, setDraft] = useState<string[]>(selected)
+  const draftSet = useMemo(() => new Set(draft), [draft])
+  const filteredItems = useMemo(() => {
+    const needle = search.trim().toLocaleLowerCase('uz-UZ')
+    if (!needle) return items
+    return items.filter((item) => `${item.label} ${item.detail || ''}`.toLocaleLowerCase('uz-UZ').includes(needle))
+  }, [items, search])
+  const changed = draft.length !== selected.length || draft.some((id) => !selected.includes(id))
+
+  useEffect(() => {
+    if (!isOpen) return
+    setDraft(selected)
+    setSearch('')
+  }, [isOpen, selected])
+  useEffect(() => {
+    if (!isOpen) return
+    const closeOnOutside = (event: PointerEvent) => { if (!rootRef.current?.contains(event.target as Node)) onClose() }
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose() }
+    document.addEventListener('pointerdown', closeOnOutside)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => { document.removeEventListener('pointerdown', closeOnOutside); document.removeEventListener('keydown', closeOnEscape) }
+  }, [isOpen, onClose])
+
+  const toggleItem = (id: string) => setDraft((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id])
+  return <div className={`visibility-menu ${isOpen ? 'open' : ''}`} ref={rootRef}><button type="button" className="btn ghost compact visibility-trigger" aria-expanded={isOpen} aria-controls={`${menuId}-popover`} onClick={onToggle}>{icon}<span>{label}</span><b>{selected.length}</b><ChevronDown className="visibility-chevron"/></button>{isOpen && <div className="visibility-popover" id={`${menuId}-popover`} role="dialog" aria-label={`${label} tanlash`}><div className="visibility-heading"><span>{icon}<span><strong>{label}ni tanlash</strong><small>{draft.length} / {items.length} ta tanlandi</small></span></span><button type="button" onClick={onClose} aria-label="Oynani yopish"><X/></button></div><div className="visibility-search"><Search/><input autoFocus aria-label={`${label} bo‘yicha qidirish`} type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={`${label} bo‘yicha qidirish`}/>{search && <button type="button" onClick={() => setSearch('')} aria-label="Qidiruvni tozalash"><X/></button>}</div><div className="visibility-actions"><button type="button" onClick={() => setDraft(items.map((item) => item.id))}>Barchasini tanlash</button><button type="button" onClick={() => setDraft([])}>Tanlovni tozalash</button></div><div className="visibility-list">{filteredItems.map((item) => <label key={item.id} className={draftSet.has(item.id) ? 'selected' : ''}><input type="checkbox" checked={draftSet.has(item.id)} onChange={() => toggleItem(item.id)}/><span><strong>{item.label}</strong>{item.detail && <small>{item.detail}</small>}</span><i><Check/></i></label>)}{!filteredItems.length && <div className="visibility-empty"><Search/><span>Qidiruv bo‘yicha ma’lumot topilmadi</span></div>}</div><div className="visibility-footer"><button type="button" className="btn ghost compact" onClick={onClose}>Bekor qilish</button><button type="button" className="btn primary compact" disabled={!changed} onClick={() => { onChange(draft); onClose() }}><Check/> Qo‘llash</button></div></div>}</div>
 }
 
 export default function PublicMapPage() {
@@ -31,15 +57,17 @@ export default function PublicMapPage() {
   const [statsCollapsed, setStatsCollapsed] = useState(false)
   const [selected, setSelected] = useState<Record<string, unknown> | null>(null)
   const [mapMode, setMapMode] = useState<'posts' | 'top5' | 'group' | 'single'>(initial.corridor ? 'single' : initial.origin ? 'group' : 'posts')
-  const [rankingPostType, setRankingPostType] = useState<RankingPostType>('ALL')
   const [selectedCorridorIds, setSelectedCorridorIds] = useState<string[]>([])
   const [selectedPostIds, setSelectedPostIds] = useState<string[]>([])
+  const [openVisibilityMenu, setOpenVisibilityMenu] = useState<'corridors' | 'posts' | null>(null)
   const [globalSearch, setGlobalSearch] = useState('')
+  const [globalSearchOpen, setGlobalSearchOpen] = useState(false)
   const deferredSearch = useDeferredValue(globalSearch)
   const [focusPost, setFocusPost] = useState<{ latitude: number; longitude: number } | null>(null)
   const [presets, setPresets] = useState<Array<{ name: string; filters: Filters }>>(() => { try { return JSON.parse(localStorage.getItem('transit-filter-presets') || '[]') } catch { return [] } })
   const explicitPeriod = useRef(params.has('date_from') || params.has('date_to'))
   const periodApplied = useRef(false)
+  const globalSearchRef = useRef<HTMLDivElement>(null)
   const reportPeriod = useQuery({ queryKey: ['report-period'], queryFn: () => api<{ date_from?: string; date_to?: string }>('/meta/report-period'), staleTime: 5 * 60_000 })
   const globalResults = useQuery({ queryKey: ['global-search', deferredSearch], queryFn: () => api<{ posts: Array<{ id: string; code: string; name: string; latitude?: number; longitude?: number }>; corridors: Array<{ id: string; code: string; name: string }> }>(`/search?q=${encodeURIComponent(deferredSearch)}`), enabled: deferredSearch.trim().length >= 2, staleTime: 60_000 })
   const catalog = useQuery({ queryKey: ['public-catalog'], queryFn: () => api<{ countries: Country[]; posts: CustomsPost[]; corridors: Corridor[] }>('/public/catalog'), staleTime: 5 * 60_000 })
@@ -63,8 +91,8 @@ export default function PublicMapPage() {
     const collection = query.data?.posts
     if (!collection || !selectedPostIds.length) return EMPTY_FEATURE_COLLECTION
     const selectedSet = new Set(selectedPostIds)
-    return { ...collection, features: collection.features.filter((feature) => selectedSet.has(String(feature.properties.id || '')) && (rankingPostType === 'ALL' || feature.properties.post_type === rankingPostType)) }
-  }, [query.data?.posts, rankingPostType, selectedPostIds])
+    return { ...collection, features: collection.features.filter((feature) => selectedSet.has(String(feature.properties.id || ''))) }
+  }, [query.data?.posts, selectedPostIds])
   const visibleCorridors = useMemo(() => {
     const collection = query.data?.corridors
     if (!collection || !selectedCorridorIds.length) return EMPTY_FEATURE_COLLECTION
@@ -72,6 +100,14 @@ export default function PublicMapPage() {
     return { ...collection, features: collection.features.filter((feature) => selectedSet.has(String(feature.properties.id || ''))) }
   }, [query.data?.corridors, selectedCorridorIds])
   const selectCorridor = useCallback((value: Record<string, unknown> | null) => setSelected(value), [])
+  useEffect(() => {
+    if (!globalSearchOpen) return
+    const closeOnOutside = (event: PointerEvent) => { if (!globalSearchRef.current?.contains(event.target as Node)) setGlobalSearchOpen(false) }
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setGlobalSearchOpen(false) }
+    document.addEventListener('pointerdown', closeOnOutside)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => { document.removeEventListener('pointerdown', closeOnOutside); document.removeEventListener('keydown', closeOnEscape) }
+  }, [globalSearchOpen])
   useEffect(() => {
     if (periodApplied.current || explicitPeriod.current || !reportPeriod.data?.date_to) return
     periodApplied.current = true
@@ -104,10 +140,10 @@ export default function PublicMapPage() {
     <div className="public-page">
       <header className="public-header"><div className="public-brand"><span className="brand-mark"><ShieldCheck /></span><div><strong>Tranzit transport yo'laklari</strong><small>O'ZBEKISTON RESPUBLIKASI · GEOANALITIK TIZIM</small></div></div><div className="header-meta"><span className={pageError || databaseDegraded ? 'system-state error' : 'system-state'}><Radio size={14}/><i/> {systemState}</span><div><small>OXIRGI YANGILANISH</small><strong>{query.data ? format(new Date(query.data.meta.refreshed_at), 'dd.MM.yyyy · HH:mm') : '—'}</strong></div><button className="icon-button" onClick={refreshAll} title="Yangilash"><RefreshCw size={18}/></button><Link className="admin-login-link" to="/admin"><LogIn size={18}/> Admin</Link></div></header>
       <main className="public-content">
-        <section className="public-quick-tools"><div className="public-search"><Search/><input placeholder="Post yoki korridorni qidiring" value={globalSearch} onChange={(e) => setGlobalSearch(e.target.value)}/>{globalResults.data && globalSearch && <div className="public-search-results">{globalResults.data.corridors.map((item) => <button key={item.id} onClick={() => { showCorridor(item.code); setGlobalSearch('') }}><strong>{item.code}</strong> {item.name}</button>)}{globalResults.data.posts.map((item) => <button key={item.id} onClick={() => { if (item.latitude != null && item.longitude != null) setFocusPost({ latitude: item.latitude, longitude: item.longitude }); setSelectedPostIds((current) => current.includes(item.id) ? current : [...current, item.id]); setMapMode('posts'); setGlobalSearch('') }}><strong>{item.code}</strong> {item.name}</button>)}</div>}</div><VisibilityMenu label="Yo‘laklar" icon={<Layers3/>} items={(corridors.data?.items || []).map((item) => ({ id: item.id, label: item.name, detail: `${item.origin_country_code || '—'} → ${item.destination_country_code || '—'} · ${item.code}` }))} selected={selectedCorridorIds} onChange={changeVisibleCorridors}/><VisibilityMenu label="Postlar" icon={<MapPinned/>} items={(posts.data?.items || []).filter((item) => item.latitude != null && item.longitude != null).map((item) => ({ id: item.id, label: item.post_name, detail: `${item.post_code} · ${item.post_type}` }))} selected={selectedPostIds} onChange={setSelectedPostIds}/><button className="btn ghost compact" onClick={savePreset}><Bookmark/> Filterni saqlash</button>{presets.length > 0 && <select defaultValue="" onChange={(e) => { const item = presets.find((preset) => preset.name === e.target.value); if (item) applyPreset(item) }}><option value="">Saqlangan filterlar</option>{presets.map((item) => <option key={item.name}>{item.name}</option>)}</select>}</section>
+        <section className="public-quick-tools"><div className="public-search" ref={globalSearchRef}><Search/><input placeholder="Post yoki korridorni qidiring" value={globalSearch} onFocus={() => setGlobalSearchOpen(true)} onChange={(e) => { setGlobalSearch(e.target.value); setGlobalSearchOpen(true) }}/>{globalSearchOpen && globalResults.data && globalSearch && <div className="public-search-results">{globalResults.data.corridors.map((item) => <button key={item.id} onClick={() => { showCorridor(item.code); setGlobalSearch(''); setGlobalSearchOpen(false) }}><strong>{item.code}</strong> {item.name}</button>)}{globalResults.data.posts.map((item) => <button key={item.id} onClick={() => { if (item.latitude != null && item.longitude != null) setFocusPost({ latitude: item.latitude, longitude: item.longitude }); setSelectedPostIds((current) => current.includes(item.id) ? current : [...current, item.id]); setMapMode('posts'); setGlobalSearch(''); setGlobalSearchOpen(false) }}><strong>{item.code}</strong> {item.name}</button>)}</div>}</div><VisibilityMenu menuId="corridors" label="Yo‘laklar" icon={<Layers3/>} items={(corridors.data?.items || []).map((item) => ({ id: item.id, label: item.name, detail: `${item.origin_country_code || '—'} → ${item.destination_country_code || '—'} · ${item.code}` }))} selected={selectedCorridorIds} isOpen={openVisibilityMenu === 'corridors'} onToggle={() => setOpenVisibilityMenu((current) => current === 'corridors' ? null : 'corridors')} onClose={() => setOpenVisibilityMenu(null)} onChange={changeVisibleCorridors}/><VisibilityMenu menuId="posts" label="Postlar" icon={<MapPinned/>} items={(posts.data?.items || []).filter((item) => item.latitude != null && item.longitude != null).map((item) => ({ id: item.id, label: item.post_name, detail: `${item.post_code} · ${item.post_type}` }))} selected={selectedPostIds} isOpen={openVisibilityMenu === 'posts'} onToggle={() => setOpenVisibilityMenu((current) => current === 'posts' ? null : 'posts')} onClose={() => setOpenVisibilityMenu(null)} onChange={setSelectedPostIds}/><button className="btn ghost compact" onClick={savePreset}><Bookmark/> Filterni saqlash</button>{presets.length > 0 && <select defaultValue="" onChange={(e) => { const item = presets.find((preset) => preset.name === e.target.value); if (item) applyPreset(item) }}><option value="">Saqlangan filterlar</option>{presets.map((item) => <option key={item.name}>{item.name}</option>)}</select>}</section>
         <FilterPanel value={filters} draft={draft} setDraft={setDraft} apply={apply} clear={clear} countries={countries.data || []} posts={posts.data?.items || []} corridors={corridors.data?.items || []}/>
         <KpiGrid data={query.data}/>
-        <section className="map-section"><div className="map-section-title"><div><p className="eyebrow">TRANZIT OQIMLARI XARITASI</p><h2>Tanlangan avtomobil va dengiz yo‘llari</h2></div><a className="btn ghost compact" href={`${API_BASE}/analytics/export.csv?date_from=${filters.date_from}&date_to=${filters.date_to}`}><Download size={15}/> CSV</a></div><CorridorPicker corridors={visibleCorridors} topPairs={query.data?.top_pairs || []} available={corridors.data?.items || []} mode={mapMode} origin={filters.origin} destination={filters.destination} selectedCode={filters.corridor} selectedId={String(selected?.id || '')} showPosts={() => changeMapMode('posts')} showTop5={() => changeMapMode('top5')} showGroup={showGroup} showCorridor={showCorridor} select={selectCorridor}/>{mapMode === 'posts' && <PostRankingPanel posts={visiblePosts} selectedType={rankingPostType} onTypeChange={setRankingPostType}/>}<div className="map-layout"><TransitMap posts={visiblePosts} corridors={visibleCorridors} loading={query.isFetching} selectedId={String(selected?.id || '')} onCorridorSelect={selectCorridor} focusPost={focusPost}/><StatsPanel data={query.data} collapsed={statsCollapsed} toggle={() => setStatsCollapsed((v) => !v)}/></div>{(pageError || databaseDegraded) && <div className="inline-error">{errorMessage}</div>}{!query.isLoading && selectedCorridorIds.length > 0 && !visibleCorridors?.features.length && <div className="no-data">Tanlangan yo‘laklarda tayyor geometriya yo‘q. Admin panelda route holatini tekshiring.</div>}</section>
+        <section className="map-section"><div className="map-section-title"><div><p className="eyebrow">TRANZIT OQIMLARI XARITASI</p><h2>Tanlangan avtomobil va dengiz yo‘llari</h2></div><a className="btn ghost compact" href={`${API_BASE}/analytics/export.csv?date_from=${filters.date_from}&date_to=${filters.date_to}`}><Download size={15}/> CSV</a></div><CorridorPicker corridors={visibleCorridors} mode={mapMode} origin={filters.origin} destination={filters.destination} showPosts={() => changeMapMode('posts')} showTop5={() => changeMapMode('top5')} showGroup={showGroup}/><div className="map-layout"><TransitMap posts={visiblePosts} corridors={visibleCorridors} loading={query.isFetching} selectedId={String(selected?.id || '')} onCorridorSelect={selectCorridor} focusPost={focusPost}/><StatsPanel data={query.data} collapsed={statsCollapsed} toggle={() => setStatsCollapsed((v) => !v)}/></div>{(pageError || databaseDegraded) && <div className="inline-error">{errorMessage}</div>}{!query.isLoading && selectedCorridorIds.length > 0 && !visibleCorridors?.features.length && <div className="no-data">Tanlangan yo‘laklarda tayyor geometriya yo‘q. Admin panelda route holatini tekshiring.</div>}</section>
       </main>
       <CorridorDrawer corridor={selected} close={() => setSelected(null)}/>
       <footer className="public-footer"><span>© {new Date().getFullYear()} Tranzit geoanalitika</span><span>Xarita: Yandex Maps · chegara: geoBoundaries/OpenStreetMap · fallback: OpenStreetMap</span></footer>
